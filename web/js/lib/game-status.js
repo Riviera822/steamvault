@@ -52,6 +52,22 @@
  * this app's mapping protect a shared depot from deletion"). The two can
  * disagree (the remnant case above is exactly status-protected-but-not-
  * visibly-cached) — that is not a bug, it is why they are two functions.
+ *
+ * **Installed-state badge (WP AG-2).** `GET /v1/games`/`GET /v1/games/{appid}`
+ * additively carry `installed_on: [{client_id, reported_at}]` (WP AG-1,
+ * api/README.md "Installed state per app") — already pre-filtered to fresh
+ * reports server-side, so `[]` means "no fresh report", NOT "not installed
+ * anywhere". `installedBadgeState` below must never collapse that absence
+ * into a negative claim: the `NONE` state renders no badge at all, never a
+ * "not installed" sentence (docs/LEARNINGS.md, "a UI sentence built from ONE
+ * API field over-claims unless that field alone carries the meaning" — an
+ * empty list here is exactly the null/never-ran-style ambiguity that entry
+ * warns about). "Has cache content" for the badge's CACHED/NOT_CACHED split
+ * reuses `hasVisibleCacheContent` verbatim — the SAME bytes-based predicate
+ * the grid already uses to decide `dispKind`'s CACHED/NONE split — rather
+ * than a second, independently-computed definition (the exact failure class
+ * docs/LEARNINGS.md's "two call sites computing the same domain predicate
+ * WILL diverge" entry documents).
  */
 
 /** Display-status kinds this module ever returns. Intentionally NOT the
@@ -118,6 +134,97 @@ export function hasProtectedCacheContent(game, hasActiveJob) {
   const idle = game.status === "idle";
   const neverPrefilled = game.last_prefill_at == null;
   return !(idle && neverPrefilled && !hasActiveJob);
+}
+
+/** Installed-badge kinds `installedBadgeState` ever returns. `NONE` means
+ * "no fresh report" (see module header) and MUST render as no badge at all —
+ * never a "not installed" sentence. */
+export const INSTALLED_BADGE = Object.freeze({
+  NONE: "none",
+  CACHED: "cached",
+  NOT_CACHED: "not_cached",
+});
+
+/**
+ * Which installed-badge a game's card/detail sheet should show, derived
+ * purely from `installed_on` presence and `hasVisibleCacheContent` (see
+ * module header for why that specific predicate, not a new one).
+ * @param {{installed_on?: {client_id: string, reported_at: string}[], size_bytes?: number|null}} game
+ * @returns {string} one of INSTALLED_BADGE's values
+ */
+export function installedBadgeState(game) {
+  const installedOn = Array.isArray(game?.installed_on) ? game.installed_on : [];
+  if (installedOn.length === 0) return INSTALLED_BADGE.NONE;
+  return hasVisibleCacheContent(game) ? INSTALLED_BADGE.CACHED : INSTALLED_BADGE.NOT_CACHED;
+}
+
+/**
+ * A short "gaming-pc" / "gaming-pc +2" summary of an `installed_on` list —
+ * the first client's id plus a count of the rest, so a card badge stays one
+ * line regardless of how many clients report an app installed. `null` for an
+ * empty/missing list (mirrors `installedBadgeState`'s NONE — nothing honest
+ * to print, same "nothing to print" posture as format.js's helpers).
+ * @param {{client_id: string, reported_at: string}[] | null | undefined} installedOn
+ * @returns {string | null}
+ */
+export function installedOnSummary(installedOn) {
+  const list = Array.isArray(installedOn) ? installedOn : [];
+  if (list.length === 0) return null;
+  const [first, ...rest] = list;
+  return rest.length ? `${first.client_id} +${rest.length}` : first.client_id;
+}
+
+/**
+ * The installed badge's own display text for a given state — `null` for
+ * NONE (module header: no badge, no sentence). Shared by the card badge and
+ * the card's accessible-name builder so the two can never say something
+ * different about the same game.
+ * @param {string} state one of INSTALLED_BADGE's values
+ * @param {string | null} summary from installedOnSummary
+ */
+export function installedBadgeText(state, summary) {
+  if (state === INSTALLED_BADGE.CACHED) return `Installed on ${summary}`;
+  if (state === INSTALLED_BADGE.NOT_CACHED) return `Installed but not cached · ${summary}`;
+  return null;
+}
+
+/**
+ * A SHORTER form of {@link installedBadgeText} for the tightest layout
+ * (`.grid.cols3` — see css/app.css's cols3 badge rules, WP AG-2 review S3).
+ * Review measurement: the full NOT_CACHED string (149.8px) never fit the
+ * card's own cols3 width, so what rendered was "Installed but not cach…" —
+ * the one piece of information a badge exists to show (WHICH client) never
+ * appeared at all. This drops the redundant lead-in ("Installed"/"Installed
+ * but") since the badge's own colour/position already say "this is the
+ * installed indicator" — only the fact this compact form cannot state
+ * without the lead-in is "not cached", which it keeps.
+ * @param {string} state one of INSTALLED_BADGE's values
+ * @param {string | null} summary from installedOnSummary
+ */
+export function installedBadgeCompactText(state, summary) {
+  if (state === INSTALLED_BADGE.CACHED) return summary;
+  if (state === INSTALLED_BADGE.NOT_CACHED) return `not cached · ${summary}`;
+  return null;
+}
+
+/**
+ * The detail sheet's round-7 structural-key input for the "Installed on"
+ * section (WP AG-2 review S4 — narrower than the raw 3-state
+ * `installedBadgeState`, and deliberately so). Only whether the section
+ * EXISTS AT ALL is structural; CACHED vs NOT_CACHED within an already-
+ * existing section is NOT, because during a live download `size_bytes` can
+ * cross zero while `dispKind` stays `"running"` (the live-job override
+ * ignores bytes entirely) — feeding the raw 3-state value into the
+ * structural key would force a full sheet re-render (animated header icon
+ * recreated, scroll reset) purely from a byte count crossing zero, for any
+ * installed game, every download. `components/game-detail-sheet.js`'s
+ * `patchInstalledSection` handles the CACHED/NOT_CACHED note in place on
+ * every patch tick instead — see that function's header.
+ * @param {object} game GameSummary/GameDetail-shaped
+ * @returns {string} `"none"` or `"present"`
+ */
+export function installedSectionPresence(game) {
+  return installedBadgeState(game) === INSTALLED_BADGE.NONE ? "none" : "present";
 }
 
 /**

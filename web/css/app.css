@@ -436,10 +436,51 @@ button.cappill{ cursor:pointer; transition:transform .12s ease, box-shadow .12s 
 button.cappill:active{ transform:scale(.93); }
 .card:active .cap button.cappill{ transform:none; }
 
-.meta{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim); }
+.meta{
+  display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim);
+  /* WP AG-2 review S3 fix: `.instbadge` below is `flex-basis:100%`, which
+     only actually lands on its OWN line (rather than fighting `.state` for
+     room on the first line, forcing ITS text to wrap and making this whole
+     row taller than a badge-less sibling) once this container can wrap at
+     all — see `.instbadge`'s own comment for the full measurement. */
+  flex-wrap:wrap;
+}
 .meta .size{ display:none; font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.2px; }
 .meta > .sic, .meta > .icnact{ display:none; }
 .meta .state{ display:block; font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--dim-2); }
+/* Installed-state badge (WP AG-2): visible in EVERY layout (grid2/grid3/
+   list) unlike `.size`/the icon above, which are grid-only or list-only —
+   this affordance exists precisely so an "installed but not cached" game is
+   never invisible in any view. `.warn` (not-cached) reuses `--stale`, the
+   same colour `.depot .tag`'s "shared" note already uses for "needs your
+   attention, not an error".
+   **Own line (review S3 fix).** `flex-basis:100%` on a `flex-wrap:wrap`
+   parent (`.meta` above) always starts a new line when anything already
+   sits on the current one (`.state`, sometimes the icon/size too), so this
+   never competes with `.state` for width — the measured bug this fixes:
+   before this, the badge shared a line with `.state`, `.state`'s own text
+   (no `white-space:nowrap` of its own) wrapped onto two lines once squeezed,
+   and the NOT_CACHED card (the one this feature exists for) rendered
+   visibly taller than every cached sibling. `max-width:100%` (not a fixed
+   px cap) is deliberate too: on its own line the badge can use the card's
+   FULL width, not a fraction shared with neighbours — the fixed 132px/96px
+   caps this rule used to carry were themselves the reason the full
+   NOT_CACHED string (measured 149.8px) could not fit even in the roomier
+   cols2 layout. `overflow:hidden`/`text-overflow:ellipsis` stay as the
+   safety net for a pathologically long client name, never the everyday
+   path — `.grid.cols3`'s compact text variant (below) is the everyday fix
+   for the tightest layout. */
+.instbadge{
+  display:inline-flex; align-items:center; font-size:10px; font-weight:600;
+  letter-spacing:.2px; color:var(--dim-2); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; max-width:100%; min-width:0;
+  flex-basis:100%; margin-top:1px;
+}
+.instbadge.warn{ color:var(--stale); }
+/* The two children `components/game-card.js`'s `buildInstalledTagChildren`
+   always builds — CSS alone decides which is visible (module header rule),
+   base case shows the full wording everywhere. */
+.instbadge .ibcompact{ display:none; }
 .rowname{ display:none; }
 
 /* ---------- library layouts (2 cols / 3 cols / list) ---------- */
@@ -452,6 +493,14 @@ button.cappill:active{ transform:scale(.93); }
 .grid.cols3 .meta{ gap:5px; font-size:10px; }
 .grid.cols3 .meta .size{ font-size:10px; }
 .grid.cols3 .pick{ top:5px; right:5px; width:18px; height:18px; }
+/* WP AG-2 review S3: cols3 is the tightest layout (measured: the full
+   wording's 149.8px never fits even on the badge's own line at this
+   column count) — swap to the compact wording instead of relying on
+   `text-overflow:ellipsis` to hide the one fact (which client) the badge
+   exists to show. */
+.grid.cols3 .instbadge{ font-size:9px; }
+.grid.cols3 .instbadge .ibfull{ display:none; }
+.grid.cols3 .instbadge .ibcompact{ display:inline; }
 
 .grid.list{ grid-template-columns:1fr; gap:7px; }
 .grid.list .card{
@@ -467,6 +516,16 @@ button.cappill:active{ transform:scale(.93); }
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .grid.list .meta{ flex:none; gap:8px; }
+/* WP AG-2 review round 2: `.meta{flex:none}` above sizes this box to its
+   OWN max-content width, and `.instbadge`'s full-wording line was the
+   widest thing in it — measured live: a two-client NOT_CACHED row's
+   `.meta` grew 244.7px -> 301px once the badge existed, squeezing
+   `.rowname` (the row's PRIMARY identifier, `flex:1; min-width:0` above)
+   down to 80px with real clipping (`scrollWidth 92 > clientWidth 80`).
+   Same fix as `.grid.cols3` below, same reason: swap to the compact
+   wording so the badge stops dictating this row's width at all. */
+.grid.list .instbadge .ibfull{ display:none; }
+.grid.list .instbadge .ibcompact{ display:inline; }
 .grid.list .meta .size{ display:inline; margin-left:0; }
 .grid.list .meta > .sic, .grid.list .meta > .icnact{ display:grid; }
 /* `.icnact` (the list-layout per-row action icon, only ever visible via the
@@ -491,6 +550,7 @@ button.cappill:active{ transform:scale(.93); }
 
 .tx-cached{ color:var(--ok); } .tx-none{ color:var(--none); }
 .tx-running{ color:var(--run); } .tx-paused{ color:var(--run); } .tx-error{ color:var(--danger); }
+.tx-stale{ color:var(--stale); }
 
 /* selection */
 .card .pick{
@@ -1130,6 +1190,15 @@ body.onboarding .nav{ display:none; }
 .orow.off .on{ color:var(--dim-2); }
 .ohint{ margin:7px 0 0; font-size:10.5px; line-height:1.5; color:var(--dim-2); }
 
+/* Installed-on section (WP AG-2) — same row idiom as `.depots`/`.depot`
+   directly above (one hairline-separated stack of `--raised` rows), so this
+   new section reads as part of the same visual family instead of inventing
+   a fourth list style in one detail sheet. */
+.installed-list{ display:flex; flex-direction:column; gap:1px; background:var(--line-soft); border-radius:var(--r-s); overflow:hidden; }
+.installed-row{ display:flex; align-items:center; gap:9px; padding:9px 11px; font-size:12.5px; background:var(--raised); }
+.installed-row .iname{ color:var(--text); }
+.installed-row .iwhen{ margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--dim-2); font-variant-numeric:tabular-nums; }
+
 .unknown{ border:1px dashed var(--line); border-radius:var(--r-m); padding:14px 13px; }
 .unknown .u1{ margin:0 0 7px; font-size:13px; font-weight:600; color:var(--text); }
 .unknown .u2{ margin:0; font-size:11.5px; line-height:1.55; color:var(--dim); }
@@ -1457,6 +1526,16 @@ body.onboarding .nav{ display:none; }
      same reason — restating an inherited value, not overriding one — this
      reset simply does not repeat that redundancy a second time. */
   .grid.cols3 .meta{ gap:6px; font-size:11px; }
+  /* WP AG-2 addendum: the compact-wording swap exists for the MOBILE cols3
+     card's tight `--tile-min` (base ruleset, this WP's own review S3 fix)
+     — this BP-L "Compact" density card is deliberately reset to the exact
+     base (non-cols3) card's look everywhere else on this line's own "fix
+     the tile" guarantee, so the badge follows the same rule: back to the
+     full wording at the base font-size, not a needless truncation on a
+     card with plenty of room. */
+  .grid.cols3 .instbadge{ font-size:11px; }
+  .grid.cols3 .instbadge .ibfull{ display:inline; }
+  .grid.cols3 .instbadge .ibcompact{ display:none; }
   .grid.cols3 .pick{ top:7px; right:7px; width:21px; height:21px; }
   /* `.grid.list` needs no override at all: its top-level rule
      (`grid-template-columns:1fr`) already carries a HIGHER specificity

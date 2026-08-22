@@ -113,6 +113,14 @@ function makeGame({
   // separation is deliberate... time is a policy on top of [the plan],
   // not part of it").
   gcHeldBackBytes = 0,
+  // WP AG-2: `installed_on: [{client_id, reported_at}]` (WP AG-1,
+  // api/README.md "Installed state per app") — already pre-filtered to
+  // fresh reports server-side, so this fixture never invents a stale/
+  // filtered-out entry; every entry here is meant to be shown. Empty by
+  // default (the common "no fresh report" case, most seed games below stay
+  // at it) — see buildCuratedGames() for which two games exercise the
+  // cached/not-cached badge states.
+  installedOn = [],
 }) {
   return {
     appid,
@@ -124,6 +132,7 @@ function makeGame({
     manifest_change_frequency: manifestChangeFrequency,
     manifest_observation_days: manifestObservationDays,
     manifest_days_since_last_change: manifestDaysSinceLastChange,
+    installed_on: installedOn,
     // Doubles as both "mapping rows" and "cache state" for this depot in the
     // demo model (the real vault-api keeps those two facts separately —
     // api/README.md "Per-game deletion": deletion clears cache content, not
@@ -153,6 +162,11 @@ function buildCuratedGames() {
       // enough observation days, no observed change.
       manifestChangeFrequency: "stable",
       manifestObservationDays: 120,
+      // WP AG-2: installed AND cached — the plain, informational badge
+      // state ("Installed on workshop-pc"), reusing buildClients()'s own
+      // "workshop-pc" client_id so the two fixtures stay one consistent
+      // fictional vault rather than inventing a third, unrelated name.
+      installedOn: [{ client_id: "workshop-pc", reported_at: isoAgo(3_600_000) }],
     }),
     makeGame({
       appid: 2010020,
@@ -167,6 +181,22 @@ function buildCuratedGames() {
       // Exercises lib/detail-wording.js's CONFIRMED_BEFORE_CACHE_CLEARED
       // branch ("Confirmed current at X (before the cache was cleared)").
       lastManifestCheck: isoAgo(2 * 86_400_000),
+      // WP AG-2: installed but NOT cached — the state this whole feature
+      // exists for. `depots: []` above already makes `size_bytes` null, so
+      // this game is exactly "an agent claims it installed, the vault has
+      // nothing on disk protecting it" with zero extra bookkeeping.
+      // TWO clients, deliberately (review round 1, S5): the single-client
+      // curated fixtures never exercised installedOnSummary's "+N" branch
+      // or the detail sheet's multi-row list in demo mode at all — and
+      // multi-client is exactly where the badge's width cap bites hardest,
+      // combined here with the NOT_CACHED case that already has the least
+      // room to spare. Reuses "workshop-pc" (Aurora Cascade's own client,
+      // buildClients() below) rather than inventing a third client_id — one
+      // real agent legitimately reports several installed games.
+      installedOn: [
+        { client_id: "loft-laptop", reported_at: isoAgo(2 * 3_600_000) },
+        { client_id: "workshop-pc", reported_at: isoAgo(5 * 3_600_000) },
+      ],
     }),
     makeGame({
       appid: 2010030,
@@ -960,6 +990,11 @@ function gameSummary(g) {
     manifest_change_frequency: g.manifest_change_frequency,
     manifest_observation_days: g.manifest_observation_days,
     manifest_days_since_last_change: g.manifest_days_since_last_change,
+    // WP AG-2: additive field on GameSummary too (api/README.md "Installed
+    // state per app" — both GET /v1/games and GET /v1/games/{appid} carry
+    // it). Each entry copied fresh so a caller mutating the returned object
+    // can never corrupt this module's own seed state.
+    installed_on: g.installed_on.map((e) => ({ ...e })),
   };
 }
 
@@ -980,6 +1015,7 @@ function gameDetail(g) {
     })),
     size_bytes: appSizeBytes(g.depots),
     needs_force: g.needs_force,
+    installed_on: g.installed_on.map((e) => ({ ...e })), // WP AG-2 (see gameSummary's own comment)
   };
 }
 

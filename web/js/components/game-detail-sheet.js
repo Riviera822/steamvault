@@ -86,7 +86,16 @@ import { buildHeaderArt } from "./header-art.js";
 import { onViewChange } from "../router.js";
 import { formatBytesGB, formatTimestamp } from "../lib/format.js";
 import { coverArtUrl, fallbackHues } from "../lib/cover-art.js";
-import { dispKind, findLiveJob, statusAction, hasVisibleCacheContent, hasProtectedCacheContent } from "../lib/game-status.js";
+import {
+  dispKind,
+  findLiveJob,
+  statusAction,
+  hasVisibleCacheContent,
+  hasProtectedCacheContent,
+  installedBadgeState,
+  installedSectionPresence,
+  INSTALLED_BADGE,
+} from "../lib/game-status.js";
 import { buildMultiPlan } from "../lib/multiplan.js";
 import { buildDepotPresentation, DEPOT_TAG } from "../lib/depot-presentation.js";
 import { findTrackedJob, detailJobActions, DETAIL_JOB_ACTION } from "../lib/detail-job.js";
@@ -471,6 +480,15 @@ function computeStructuralKey() {
     dispKind: dispKind(gameLike, liveJob),
     trackedJobStatus: trackedJob ? trackedJob.status : null,
     depotTags: presentations.map((p) => p.tag),
+    // WP AG-2 (review S4 fix): ONLY whether the "Installed on" section
+    // exists at all (none <-> present) is structural — CACHED vs
+    // NOT_CACHED within an already-existing section is deliberately NOT,
+    // per `installedSectionPresence`'s own header (a live download can
+    // cross that sub-state while dispKind stays "running" the whole time;
+    // feeding the raw 3-state value here forced an unwanted full re-render
+    // every such tick). `patchInstalledSection` keeps the note in sync for
+    // that sub-state on every patch tick instead.
+    installedBadge: installedSectionPresence(gameLike),
   });
 }
 
@@ -567,6 +585,158 @@ function buildFactLines(gameLike) {
   }
 
   return facts;
+}
+
+/**
+ * WP AG-2: one `{client_id, reported_at}` row of the "Installed on" section
+ * below. `reported_at` is rendered with `formatTimestamp` (the project's
+ * standing timestamp formatting), never the raw ISO string the API sends.
+ * `data-role="iwhen"` and the row's own `dataset.clientid` are what
+ * `patchInstalledSection` below targets on a poll tick that leaves the
+ * section's PRESENCE unchanged (see that function's header). Exported for
+ * `web/tests/game-detail-sheet-installed.test.js` (WP AG-2 review round 1 —
+ * a DOM-building component gets the same "named exception" posture
+ * `header-art.test.js`'s header documents for its own sibling).
+ */
+export function buildInstalledRow(entry) {
+  const row = document.createElement("div");
+  row.className = "installed-row";
+  row.dataset.clientid = entry.client_id;
+  const name = document.createElement("span");
+  name.className = "iname";
+  name.textContent = entry.client_id;
+  const when = document.createElement("span");
+  when.className = "iwhen";
+  when.dataset.role = "iwhen";
+  when.textContent = formatTimestamp(entry.reported_at);
+  row.append(name, when);
+  return row;
+}
+
+/**
+ * The NOT_CACHED note (WP AG-2 review nitpick): bytes-only wording. The
+ * earlier draft said the vault has "nothing... protecting this game", which
+ * collides with `hasProtectedCacheContent`'s STATUS-based vocabulary
+ * (`lib/game-status.js`'s module header) — in the "last cached remnant"
+ * case that predicate is TRUE (the mapping still protects a shared depot)
+ * at exactly the moment this note is showing (`hasVisibleCacheContent` is
+ * what gates it, per `installedBadgeState`), so the same word would assert
+ * two contradictory things about the same game in two places. Stated as a
+ * plain fact about bytes instead, which is genuinely true in both cases.
+ */
+function buildInstalledNote() {
+  const note = document.createElement("p");
+  note.className = "hint tx-stale";
+  note.dataset.role = "installed-note";
+  note.textContent = "Installed but not cached — no cached bytes for this game right now.";
+  return note;
+}
+
+/**
+ * The "Installed on" section (WP AG-2) — one row per fresh
+ * `installed_on` entry (api/README.md "Installed state per app": already
+ * pre-filtered to fresh reports, so a NON-empty list here is the only
+ * honest signal; this sheet never renders anything for the empty case, no
+ * "not installed" claim — see lib/game-status.js's module header). The
+ * `installed but not cached` note is the whole reason this feature exists:
+ * an app a client claims to have installed, with no cached bytes for it on
+ * this vault's disk (bytes-only wording, matching `buildInstalledNote`'s
+ * own — see that function's header for why "protecting" is the one word
+ * to avoid here).
+ * @param {object} gameLike GameSummary/GameDetail-shaped (both carry
+ *   `installed_on` — see currentGameLike()'s own comment on field parity).
+ * @returns {HTMLElement | null} `null` when there is nothing to show.
+ */
+export function buildInstalledSection(gameLike) {
+  const installedOn = Array.isArray(gameLike.installed_on) ? gameLike.installed_on : [];
+  if (installedOn.length === 0) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "detail-block";
+  const heading = document.createElement("h4");
+  heading.className = "sec";
+  heading.textContent = "Installed on";
+  wrap.appendChild(heading);
+
+  const list = document.createElement("div");
+  list.className = "installed-list";
+  for (const entry of installedOn) list.appendChild(buildInstalledRow(entry));
+  wrap.appendChild(list);
+
+  if (installedBadgeState(gameLike) === INSTALLED_BADGE.NOT_CACHED) {
+    wrap.appendChild(buildInstalledNote());
+  }
+
+  return wrap;
+}
+
+/**
+ * Round-7 patch-in-place for the installed-on section (called from
+ * `patchVolatile()` — this section has no icon/animated node, so unlike the
+ * header status icon it is safe to add/remove/reorder ROWS and the NOTE
+ * here, not just patch text). Only ever reaches a live `.installed-list`
+ * when the section was already painted by `render()` — whether the section
+ * EXISTS AT ALL (`installedSectionPresence`: none <-> present) is part of
+ * `computeStructuralKey()` below and goes through a full `render()` instead.
+ *
+ * **Handles the CACHED <-> NOT_CACHED sub-state too (WP AG-2 review S4).**
+ * An earlier draft fed the raw 3-state `installedBadgeState` into the
+ * structural key, so cached<->not_cached also went through a full rebuild —
+ * measured live consequence: a running download's `size_bytes` crossing
+ * zero (the server's size cache updates continuously during a download,
+ * `game-status.js`'s own module header) flips this exact transition while
+ * `dispKind` stays `"running"` throughout (the live-job override ignores
+ * bytes entirely), forcing an unwanted full sheet re-render — animated
+ * header icon recreated, scroll reset — once per download, for every
+ * installed game. `installedSectionPresence` (the structural key input) no
+ * longer distinguishes the two, so THIS function is what keeps the note in
+ * sync on every such tick instead.
+ *
+ * @param {HTMLElement} container the element to search within (the real
+ *   call site passes `contentEl`; parameterised — rather than reading the
+ *   module-private `contentEl` directly — so this function is independently
+ *   testable against a hand-built fake DOM tree with no sheet/store
+ *   apparatus at all, same reasoning `buildInstalledRow`/`buildInstalledSection`
+ *   above are already exported for).
+ * @param {object} gameLike
+ */
+export function patchInstalledSection(container, gameLike) {
+  const list = container.querySelector(".installed-list");
+  if (!list) return; // nothing painted for this game right now
+  const installedOn = Array.isArray(gameLike.installed_on) ? gameLike.installed_on : [];
+  const rowsByClient = new Map([...list.querySelectorAll(".installed-row")].map((r) => [r.dataset.clientid, r]));
+  const seen = new Set();
+  for (const entry of installedOn) {
+    seen.add(entry.client_id);
+    let row = rowsByClient.get(entry.client_id);
+    if (!row) {
+      row = buildInstalledRow(entry);
+    } else {
+      const when = row.querySelector('[data-role="iwhen"]');
+      if (when) when.textContent = formatTimestamp(entry.reported_at);
+    }
+    // Re-append every row IN SERVER ORDER on every tick (a no-op move for a
+    // row already in the right place — `appendChild` on an existing child
+    // relocates it, per spec — WP AG-2 review nitpick: a naive "only append
+    // NEW rows" left a client that re-sorted in the server's response stuck
+    // at its old position until the next full rebuild).
+    list.appendChild(row);
+  }
+  for (const [clientId, row] of rowsByClient) {
+    if (!seen.has(clientId)) row.remove();
+  }
+
+  // The note is the ONE part of this section installedSectionPresence no
+  // longer forces a rebuild for (S4, this function's own header) — synced
+  // here on every patch tick instead, added/removed/left alone as the live
+  // badge state requires.
+  const wantsNote = installedBadgeState(gameLike) === INSTALLED_BADGE.NOT_CACHED;
+  const existingNote = container.querySelector('[data-role="installed-note"]');
+  if (wantsNote && !existingNote) {
+    list.parentNode.appendChild(buildInstalledNote());
+  } else if (!wantsNote && existingNote) {
+    existingNote.remove();
+  }
 }
 
 async function withButtonBusy(btn, fn) {
@@ -867,6 +1037,9 @@ function render() {
   contentEl.append(buildHeader(gameLike, liveJob));
   contentEl.append(buildFactLines(gameLike));
 
+  const installedSection = buildInstalledSection(gameLike);
+  if (installedSection) contentEl.append(installedSection);
+
   if (trackedJob) {
     contentEl.append(buildJobControlRow(trackedJob));
   } else {
@@ -907,6 +1080,8 @@ function patchVolatile() {
 
   const confirmedEl = contentEl.querySelector('[data-role="confirmed"]');
   if (confirmedEl) confirmedEl.textContent = confirmedCurrentText(gameLike.last_prefill_at, gameLike.last_manifest_check);
+
+  patchInstalledSection(contentEl, gameLike);
 
   for (const p of currentDepotPresentations()) {
     const wrap = contentEl.querySelector(`.depotwrap[data-depotid="${p.depotid}"]`);

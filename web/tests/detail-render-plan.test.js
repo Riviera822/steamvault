@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildDetailStructuralKey } from "../js/lib/detail-render-plan.js";
+import { installedSectionPresence } from "../js/lib/game-status.js";
 
 const base = { dispKind: "cached", trackedJobStatus: null, depotTags: ["exclusive", "protected"] };
 
@@ -57,4 +58,48 @@ test("missing/non-array depotTags defaults to an empty list rather than throwing
     buildDetailStructuralKey({ dispKind: "none", trackedJobStatus: null, depotTags: undefined }),
     buildDetailStructuralKey({ dispKind: "none", trackedJobStatus: null, depotTags: [] }),
   );
+});
+
+// ---------------------------------------------------------------------
+// installedBadge (WP AG-2). `buildDetailStructuralKey` itself is domain-
+// agnostic — it folds WHATEVER STRING it is given, no matter what that
+// string means — so the interesting contract lives at the boundary with
+// the REAL caller: `components/game-detail-sheet.js`'s `computeStructuralKey`
+// feeds it `installedSectionPresence(gameLike)`'s result, never the raw
+// `installedBadgeState`. The tests below exercise that boundary directly
+// rather than testing this file's string-folding in isolation from what
+// actually gets fed into it.
+// ---------------------------------------------------------------------
+
+test("MUTATION TARGET -- a presence transition (e.g. none -> present) changes the key", () => {
+  const before = buildDetailStructuralKey({ ...base, installedBadge: "none" });
+  const after = buildDetailStructuralKey({ ...base, installedBadge: "present" });
+  assert.notEqual(before, after);
+});
+
+test("MUTATION TARGET (S4 fix) -- CACHED and NOT_CACHED fixtures both resolve to 'present', so the REAL caller's key does not change between them", () => {
+  // The exact boundary review round 1's S4 finding is about: if
+  // `computeStructuralKey` ever went back to feeding the raw
+  // `installedBadgeState` (cached/not_cached/none) into this function
+  // instead of `installedSectionPresence`'s collapsed value, this
+  // assertion would start failing (cached and not_cached would produce
+  // DIFFERENT keys again), which is exactly the regression that forced an
+  // unwanted full sheet re-render mid-download.
+  const cachedGame = { installed_on: [{ client_id: "c", reported_at: "2026-08-22T00:00:00Z" }], size_bytes: 500 };
+  const notCachedGame = { installed_on: [{ client_id: "c", reported_at: "2026-08-22T00:00:00Z" }], size_bytes: null };
+  const keyWhileCached = buildDetailStructuralKey({ ...base, installedBadge: installedSectionPresence(cachedGame) });
+  const keyWhileNotCached = buildDetailStructuralKey({ ...base, installedBadge: installedSectionPresence(notCachedGame) });
+  assert.equal(keyWhileCached, keyWhileNotCached);
+});
+
+test("missing installedBadge defaults to 'none', same key as an explicit 'none'", () => {
+  assert.equal(
+    buildDetailStructuralKey({ ...base, installedBadge: undefined }),
+    buildDetailStructuralKey({ ...base, installedBadge: "none" }),
+  );
+});
+
+test("a pre-AG-2 call site (no installedBadge field at all) still matches an explicit 'none'", () => {
+  const { installedBadge, ...withoutField } = { ...base, installedBadge: "none" };
+  assert.equal(buildDetailStructuralKey(withoutField), buildDetailStructuralKey({ ...base, installedBadge: "none" }));
 });

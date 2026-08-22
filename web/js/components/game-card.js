@@ -52,7 +52,16 @@
  */
 
 import { createStatusIcon, STATUS_LABEL } from "./status-icon.js";
-import { dispKind, statusAction } from "../lib/game-status.js";
+import {
+  KIND,
+  dispKind,
+  statusAction,
+  installedBadgeState,
+  installedOnSummary,
+  installedBadgeText,
+  installedBadgeCompactText,
+  INSTALLED_BADGE,
+} from "../lib/game-status.js";
 import { formatBytesGB } from "../lib/format.js";
 import { coverArtUrl, fallbackHues, fallbackPattern } from "../lib/cover-art.js";
 
@@ -71,16 +80,85 @@ function pillNumberText(game, kind) {
   return formatBytesGB(game.size_bytes);
 }
 
+/** Installed-badge class for the `.instbadge` span (WP AG-2, css/app.css) —
+ * `.warn` is the "installed but not cached" case this whole feature exists
+ * for; the plain class is purely informational. */
+function installedTagClass(state) {
+  return state === INSTALLED_BADGE.NOT_CACHED ? "instbadge warn" : "instbadge";
+}
+
 /**
- * Patch the VOLATILE text on an already-built card in place — no node is
- * created, removed or replaced, so the status-icon `<svg>` subtree (and
- * any CSS animation running on it) is left completely untouched. This is
- * the round-7 counterpart to `buildCard`: called only when
- * `render-plan.js`'s `planGamesUpdate` has already established the game's
- * STRUCTURAL key (`cardStructuralKey`) has NOT changed — the caller
- * (views/library.js) must never call this for a structural transition,
- * only for a same-kind update (e.g. `size_bytes` drifting while a download
- * runs, per the games-poll cadence).
+ * Build the `.instbadge`'s two children (review S3 fix): a `.ibfull` span
+ * with {@link installedBadgeText}'s full wording and an `.ibcompact` span
+ * with {@link installedBadgeCompactText}'s shorter wording — CSS (not this
+ * module, per its own "CSS alone decides what's visible" header rule)
+ * toggles which one is actually shown, `.ibcompact` only in `.grid.cols3`.
+ * Review measurement: the full string never fit the cols3 card at all
+ * (149.8px against the space available), so the one fact the badge exists
+ * to show — WHICH client — never rendered; the compact form exists
+ * specifically so cols3 keeps that fact instead of an ellipsis.
+ * @param {string} state one of INSTALLED_BADGE's values (never NONE — the
+ *   caller never builds this for the empty case).
+ * @param {string} summary from installedOnSummary
+ * @returns {HTMLElement[]}
+ */
+function buildInstalledTagChildren(state, summary) {
+  const full = document.createElement("span");
+  full.className = "ibfull";
+  full.textContent = installedBadgeText(state, summary);
+  const compact = document.createElement("span");
+  compact.className = "ibcompact";
+  compact.textContent = installedBadgeCompactText(state, summary);
+  return [full, compact];
+}
+
+/**
+ * Create/update/remove the `.instbadge` child of a card's `.meta` row so it
+ * always matches `game.installed_on`'s current state — called from BOTH
+ * `buildCard` (first paint) and `patchCardVolatile` (a poll tick that only
+ * this field changed, e.g. an agent's report going stale or fresh, without
+ * `dispKind` itself changing). This is the ONE documented exception to
+ * `patchCardVolatile`'s own "no node is created, removed or replaced" rule
+ * (see that function's docstring) — a plain text badge with no icon and no
+ * CSS animation, so creating/removing/replacing it here on a patch tick
+ * cannot touch the status-icon `<svg>` subtree that rule exists to protect.
+ * @param {HTMLElement} metaEl the card's `.meta` row (mutated).
+ * @param {object} game GameSummary
+ */
+function syncInstalledTag(metaEl, game) {
+  const state = installedBadgeState(game);
+  const existing = metaEl.querySelector(".instbadge");
+  if (state === INSTALLED_BADGE.NONE) {
+    if (existing) existing.remove();
+    return;
+  }
+  const summary = installedOnSummary(game.installed_on);
+  const [full, compact] = buildInstalledTagChildren(state, summary);
+  if (existing) {
+    existing.className = installedTagClass(state);
+    existing.replaceChildren(full, compact);
+  } else {
+    const tag = document.createElement("span");
+    tag.className = installedTagClass(state);
+    tag.append(full, compact);
+    metaEl.appendChild(tag);
+  }
+}
+
+/**
+ * Patch the VOLATILE text on an already-built card in place. The
+ * status-icon `<svg>` subtree (and any CSS animation running on it) is
+ * left completely untouched — that is the invariant this function exists
+ * to protect, and the reason it exists at all. The ONE documented
+ * exception (WP AG-2 review): `syncInstalledTag` below MAY create/remove/
+ * replace the `.instbadge` span itself, since that is a plain text node
+ * with no icon and no animation — see its own docstring for why that
+ * cannot touch the protected subtree. This is the round-7 counterpart to
+ * `buildCard`: called only when `render-plan.js`'s `planGamesUpdate` has
+ * already established the game's STRUCTURAL key (`cardStructuralKey`) has
+ * NOT changed — the caller (views/library.js) must never call this for a
+ * structural transition, only for a same-kind update (e.g. `size_bytes`
+ * drifting while a download runs, per the games-poll cadence).
  *
  * @param {HTMLElement} cardEl the existing `.card` element (mutated).
  * @param {object} game the game's freshest data.
@@ -106,6 +184,8 @@ export function patchCardVolatile(cardEl, game, kind) {
   }
   const sizeEl = cardEl.querySelector(".meta .size");
   if (sizeEl) sizeEl.textContent = formatBytesGB(game.size_bytes) || "—";
+  const metaEl = cardEl.querySelector(".meta");
+  if (metaEl) syncInstalledTag(metaEl, game);
   // Keep the explicit accessible name (module header) in sync too — `kind`
   // is unchanged by definition on the patch path (round-7 rule), but the
   // SIZE this same tick just wrote above is part of the announced name and
@@ -218,6 +298,30 @@ export function displayName(game) {
   return game.name && game.name.trim() ? game.name.trim() : `App ${game.appid}`;
 }
 
+/**
+ * The installed-badge fragment for the card's accessible name (WP AG-2
+ * review nitpick): {@link installedBadgeText}'s NOT_CACHED wording restates
+ * "not cached", which duplicates `STATUS_LABEL.none` ("Not cached") when
+ * `dispKind` is itself `"none"` — the only `dispKind` the NOT_CACHED badge
+ * can co-occur with that ALSO says "not cached" on its own (`dispKind`'s
+ * other possible co-occurrences — running/paused/error — each say something
+ * that does not mention cache state at all, so no restatement risk there).
+ * In that one case this fragment drops the "but not cached" half, since the
+ * status word right before it in the joined label already said it.
+ * @param {object} game
+ * @param {string} kind this card's dispKind
+ * @returns {string | null}
+ */
+function installedAriaFragment(game, kind) {
+  const state = installedBadgeState(game);
+  if (state === INSTALLED_BADGE.NONE) return null;
+  const summary = installedOnSummary(game.installed_on);
+  if (state === INSTALLED_BADGE.NOT_CACHED && kind === KIND.NONE) {
+    return `Installed on ${summary}`;
+  }
+  return installedBadgeText(state, summary);
+}
+
 /** The card's explicit accessible name (module header, "Nested-interactive-
  * widget a11y") — game name, status word, and size when there is one to
  * report (mirrors the visible `.meta` row's own size fallback: "—" is a
@@ -228,6 +332,8 @@ function cardAccessibleLabel(game, kind) {
   const parts = [displayName(game), STATUS_LABEL[kind] || STATUS_LABEL.none];
   const sizeText = formatBytesGB(game.size_bytes);
   if (sizeText) parts.push(sizeText);
+  const installedText = installedAriaFragment(game, kind);
+  if (installedText) parts.push(installedText);
   return parts.join(" — ");
 }
 
@@ -308,6 +414,7 @@ export function buildCard(game, ctx) {
   size.className = "size";
   size.textContent = formatBytesGB(game.size_bytes) || "—";
   meta.appendChild(size);
+  syncInstalledTag(meta, game); // WP AG-2: appends `.instbadge` iff installed_on is non-empty
   card.appendChild(meta);
 
   // ---- interaction wiring (mockup parity: long-press / right-click /

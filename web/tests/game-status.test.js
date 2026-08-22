@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   KIND,
+  INSTALLED_BADGE,
   findLiveJob,
   indexLiveJobsByAppid,
   hasVisibleCacheContent,
@@ -13,6 +14,11 @@ import {
   dispKind,
   statusAction,
   isJobStateTransition,
+  installedBadgeState,
+  installedOnSummary,
+  installedBadgeText,
+  installedBadgeCompactText,
+  installedSectionPresence,
 } from "../js/lib/game-status.js";
 
 const game = (over) => ({
@@ -177,4 +183,133 @@ test("isJobStateTransition: a brand-new job (no prev) is always a transition", (
 });
 test("isJobStateTransition: a job disappearing (no curr) is always a transition", () => {
   assert.equal(isJobStateTransition(job({ status: "running" }), undefined), true);
+});
+
+// ---------------------------------------------------------------------
+// installedBadgeState / installedOnSummary / installedBadgeText (WP AG-2)
+// ---------------------------------------------------------------------
+
+const installedOn = (n, over = {}) =>
+  Array.from({ length: n }, (_, i) => ({
+    client_id: `client-${i}`,
+    reported_at: "2026-08-22T09:15:03Z",
+    ...over,
+  }));
+
+test("MUTATION TARGET -- installedBadgeState: empty installed_on is NONE regardless of cache state", () => {
+  assert.equal(installedBadgeState(game({ installed_on: [], size_bytes: 500 })), INSTALLED_BADGE.NONE);
+  assert.equal(installedBadgeState(game({ installed_on: [], size_bytes: null })), INSTALLED_BADGE.NONE);
+});
+
+test("installedBadgeState: missing installed_on field (older fixture, pre-AG-1) is also NONE, not a throw", () => {
+  assert.equal(installedBadgeState(game({})), INSTALLED_BADGE.NONE);
+});
+
+test("MUTATION TARGET -- installedBadgeState: non-empty installed_on + visible bytes is CACHED", () => {
+  assert.equal(installedBadgeState(game({ installed_on: installedOn(1), size_bytes: 500 })), INSTALLED_BADGE.CACHED);
+});
+
+test("MUTATION TARGET -- installedBadgeState: non-empty installed_on + no visible bytes is NOT_CACHED (both directions pinned)", () => {
+  assert.equal(installedBadgeState(game({ installed_on: installedOn(1), size_bytes: null })), INSTALLED_BADGE.NOT_CACHED);
+  assert.equal(installedBadgeState(game({ installed_on: installedOn(1), size_bytes: 0 })), INSTALLED_BADGE.NOT_CACHED);
+});
+
+test("installedBadgeState: the 'last cached remnant' case (status done, no visible bytes) is still NOT_CACHED when installed", () => {
+  // Mirrors the hasVisibleCacheContent/hasProtectedCacheContent divergence
+  // test above -- the badge must follow the BYTES predicate, same as the
+  // grid's own dispKind, not the status-based one.
+  const remnant = game({
+    status: "done",
+    size_bytes: null,
+    last_prefill_at: "2026-08-01T00:00:00Z",
+    installed_on: installedOn(1),
+  });
+  assert.equal(installedBadgeState(remnant), INSTALLED_BADGE.NOT_CACHED);
+});
+
+test("installedOnSummary: empty/missing list is null (nothing honest to print)", () => {
+  assert.equal(installedOnSummary([]), null);
+  assert.equal(installedOnSummary(null), null);
+  assert.equal(installedOnSummary(undefined), null);
+});
+
+test("installedOnSummary: one entry is just its client_id", () => {
+  assert.equal(installedOnSummary(installedOn(1)), "client-0");
+});
+
+test("installedOnSummary: more than one entry appends a '+N' count of the REST", () => {
+  assert.equal(installedOnSummary(installedOn(3)), "client-0 +2");
+});
+
+test("MUTATION TARGET -- installedBadgeText: NONE never produces a sentence (no 'not installed' claim)", () => {
+  assert.equal(installedBadgeText(INSTALLED_BADGE.NONE, null), null);
+});
+
+test("installedBadgeText: CACHED names the client(s), no 'not cached' wording", () => {
+  const text = installedBadgeText(INSTALLED_BADGE.CACHED, "client-0");
+  assert.match(text, /^Installed on client-0$/);
+  assert.doesNotMatch(text, /not cached/i);
+});
+
+test("MUTATION TARGET -- installedBadgeText: NOT_CACHED states both facts -- installed, and not cached", () => {
+  const text = installedBadgeText(INSTALLED_BADGE.NOT_CACHED, "client-0");
+  assert.match(text, /installed/i);
+  assert.match(text, /not cached/i);
+});
+
+test("installedBadgeText: an unrecognised state is also null, not a thrown error", () => {
+  assert.equal(installedBadgeText("bogus", "client-0"), null);
+});
+
+test("installedBadgeCompactText: NONE never produces a sentence (no 'not installed' claim)", () => {
+  assert.equal(installedBadgeCompactText(INSTALLED_BADGE.NONE, null), null);
+});
+
+test("MUTATION TARGET -- installedBadgeCompactText: CACHED is just the summary, no lead-in", () => {
+  assert.equal(installedBadgeCompactText(INSTALLED_BADGE.CACHED, "client-0"), "client-0");
+});
+
+test("MUTATION TARGET -- installedBadgeCompactText: NOT_CACHED keeps 'not cached', drops the 'Installed but' lead-in", () => {
+  const text = installedBadgeCompactText(INSTALLED_BADGE.NOT_CACHED, "client-0");
+  assert.match(text, /not cached/i);
+  assert.doesNotMatch(text, /^Installed/, "the compact form must not restate the 'Installed' lead-in the full form uses");
+  assert.match(text, /client-0/);
+});
+
+test("installedBadgeCompactText is always no longer than installedBadgeText for the same state/summary (it exists to be shorter)", () => {
+  for (const state of [INSTALLED_BADGE.CACHED, INSTALLED_BADGE.NOT_CACHED]) {
+    const full = installedBadgeText(state, "workshop-pc +2");
+    const compact = installedBadgeCompactText(state, "workshop-pc +2");
+    assert.ok(compact.length < full.length, `compact form for ${state} must be strictly shorter than the full form`);
+  }
+});
+
+test("installedBadgeCompactText: an unrecognised state is also null, not a thrown error", () => {
+  assert.equal(installedBadgeCompactText("bogus", "client-0"), null);
+});
+
+// ---------------------------------------------------------------------
+// installedSectionPresence (WP AG-2 review S4 -- the detail sheet's
+// structural-key input, narrower than installedBadgeState on purpose)
+// ---------------------------------------------------------------------
+
+test("MUTATION TARGET -- installedSectionPresence: NONE collapses to 'none'", () => {
+  assert.equal(installedSectionPresence(game({ installed_on: [] })), "none");
+});
+
+test("MUTATION TARGET -- installedSectionPresence: CACHED and NOT_CACHED BOTH collapse to 'present' -- the whole S4 fix", () => {
+  // If this collapsed cached/not_cached into DIFFERENT values again, a live
+  // download crossing size_bytes from 0 to positive (dispKind staying
+  // "running" throughout, per game-status.js's own dispKind rule) would
+  // force a full detail-sheet re-render every time, for every installed
+  // game -- the exact regression S4 describes.
+  const cached = installedSectionPresence(game({ installed_on: installedOn(1), size_bytes: 500 }));
+  const notCached = installedSectionPresence(game({ installed_on: installedOn(1), size_bytes: null }));
+  assert.equal(cached, "present");
+  assert.equal(notCached, "present");
+  assert.equal(cached, notCached);
+});
+
+test("installedSectionPresence: missing installed_on field is also 'none', not a throw", () => {
+  assert.equal(installedSectionPresence(game({})), "none");
 });
