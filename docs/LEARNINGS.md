@@ -697,3 +697,49 @@ These are not style preferences; each entry cost a review round to learn.
   requiring the banner call to be GUARDED — a bare DemoModeBanner()
   (permanent banner for real users) built green. Diff the guarantees,
   not the counts.
+
+## 2026-08-22, second wave — the AG series (AG-0..AG-3)
+
+- Pinning the pure/model layer proves NOTHING about the pixels: both
+  frontend packages of this series FAILed review the same day with the
+  same shape — web: all six DOM wirings deletable at 735/735 green;
+  Android: ten of eleven UI/controller wirings deletable at 643/643.
+  The one thing that fired on Android was an UnusedResources lint, i.e.
+  luck (and deleting a LARGER set kept even that green, because dead
+  private composables keep their resource references alive). Every
+  wiring from model to pixel needs a named witness. The two idioms that
+  work here: fake-dom tests for DOM-building web components, and the
+  comment-stripped source-scan pin for Compose call sites.
+- Root-cause the missing witnesses before writing them: the web DOM
+  layer was unpinned because the SHARED TEST HARNESS (fake-dom.js) was
+  a stub whose querySelector/appendChild were silent no-ops — the
+  coder had written tests against it and they passed vacuously. After
+  extending a shared harness, prove the OLD suites still bite (mutate
+  their subjects once each), and make the harness THROW on unsupported
+  input instead of returning empty — a harness that silently no-ops is
+  the silent-pass class one layer down.
+- Source-scan wiring pins have generations, and the weaker one has two
+  measured failure modes: a dead never-called helper satisfies a
+  contains/window scan (false negative — the feature silently gone),
+  and a legitimately-moved-and-called helper fails with "deleted" (false
+  positive with a wrong diagnosis — how guards get deleted in
+  irritation). The strong generation requires the call's
+  nearest-enclosing function to BE the intended top-level composable,
+  and its message distinguishes deleted from moved. Use it from the
+  start; both frontend packages had to be upgraded to it in review.
+- The shared-function/unshared-BOUND divergence: AG-1 unified the
+  freshness predicate into one function and still diverged, because one
+  caller fed it the boot settings snapshot while the other resolved
+  effective settings (db>env>default) per tick — one PATCH made the API
+  assert exactly the report the scheduler had just refused. Sharing the
+  predicate is half the job; both callers must share its INPUTS
+  (settings resolution and clock). Third instance of the
+  boot-snapshot-vs-effective class in one week (SWEEP-1 startup line,
+  AG-1, and the games clock seam).
+- Demo fixtures drift back the moment a twin lacks the twin pin,
+  proven within 48 hours of writing the rule: Android's demo carried
+  the pre-ADR-0014 auto_gc "off" and would have shipped screenshots
+  showing a disk-growth warning no real fresh install shows — under a
+  kdoc asserting the shipped defaults produce it. Every platform that
+  restates a server default needs its own config-drift guard the day
+  the fixture is born, not after the first drift.

@@ -2410,15 +2410,16 @@ Phases 1–3 plus 4a shipped. Rewritten 2026-08-17 to reflect the real state.
    (keystore creation is a user action), plus the review carry-over list in
    `docs/WORKPACKAGES.md` — done 2026-08-17, together with WP 4b.10 (the
    clients/bypass detail surface); see §7 Phase 4b's evidence notes.
-4. [ ] **Phase 4c / 4d** frontend halves: the manual "check & update" trigger
-   in both UIs (web done WP 4c-web, Android done WP 4c-app — both frontend
-   triggers now shipped), and the now-default-on "keep the cache current"
-   sweep mode (WP SWEEP-1, 2026-08-22, flipped it — and its auto-GC pair —
-   from opt-in to the shipped default, docs/adr/0014-sweep-cached-and-auto-
-   gc-default-on.md; its auto-GC prerequisite is shipped — see §7 Phase 3;
-   the sweep mode's own frontend surface: web DONE 2026-08-22 as WP 4d-web
-   (commit c825625, see §7 Phase 4d's closing note), Android still open —
-   the natural home is the AG-3 parity package in item 8 below).
+4. [x] **Phase 4c / 4d** frontend halves — CLOSED 2026-08-22: the manual
+   "check & update" trigger in both UIs (web WP 4c-web, Android WP 4c-app),
+   and the now-default-on "keep the cache current" sweep mode (WP SWEEP-1
+   flipped it — and its auto-GC pair — from opt-in to the shipped default,
+   docs/adr/0014-sweep-cached-and-auto-gc-default-on.md). Its frontend
+   surface shipped in both UIs the same day: web as WP 4d-web (commit
+   c825625, see §7 Phase 4d's closing note), Android as part of WP AG-3
+   (commit 0a3bfc5) — toggle, GC-risk warning and three-way last-sweep
+   status, the Kotlin port pinned by string equality against the
+   twice-reviewed web copy.
 5. [x] **WP 5.3 docs half** — `SECURITY.md` + `docs/security/threat-model.md`,
    done 2026-08-18 (see §7 Phase 5). Round-2 review ran and FAILED (two
    blockers plus should-fixes, mostly citation drift from WP 4h.0 landing
@@ -2439,17 +2440,27 @@ Phases 1–3 plus 4a shipped. Rewritten 2026-08-17 to reflect the real state.
    double-appends release notes; known, commented at the site). WP 5.6
    (announcement) stays gated on the user's own end-to-end test with the
    Android app. Phase 6 integrations are deliberately post-release.
-8. [ ] **The AG series — agents become first-class residents** (user's go
-   2026-08-22 for the full chain). AG-0 DONE 2026-08-22 (commit 74e7727):
-   client identity visible and attributed at startup (source + sanitize
-   note), install-time preview reading the same hostname source as Go
-   (the COMPUTERNAME case defect found in review would have minted ghost
-   identities), rename semantics documented honestly. AG-1 DONE 2026-08-22:
-   api exposes per-game installed-state with first-class freshness +
-   DELETE /v1/clients/{id} for ghost rows. AG-2 (web badge, "installed
-   but not cached") and AG-3 (Android parity, which also carries the
-   sweep opt-out surface from item 4) follow after AG-1 defines the
-   fields, in parallel.
+8. [x] **The AG series — agents become first-class residents** — COMPLETE
+   2026-08-22, four packages in one day (user's go for the full chain).
+   AG-0 (commit 74e7727): client identity visible and attributed at
+   startup (source + sanitize note), install-time preview reading the
+   same hostname source as Go (the COMPUTERNAME case defect found in
+   review would have minted ghost identities), rename semantics
+   documented honestly. AG-1 (commit 54e7622): installed_on on the games
+   endpoints with the scheduler's own freshness gate resolved against
+   effective settings (round 1 caught the shared-function/unshared-bound
+   divergence), plus DELETE /v1/clients/{client_id} for ghost rows.
+   AG-2 (commit 0971a1d): the web badge and the payoff statement
+   "installed but not cached", after a round-1 FAIL in which every DOM
+   surface was deletable green — root cause a stub fake-dom whose no-ops
+   silently swallowed the calls; the harness itself was extended and now
+   throws on unsupported selectors. AG-3 (commit 0a3bfc5): Android
+   parity for the badge plus the sweep surface, after the same
+   wiring-unpinned FAIL on the same day, fixed with the codebase's
+   strongest anchor generation; the demo's stale pre-ADR-0014 default
+   (which made screenshots show a warning no real fresh install shows)
+   corrected and pinned by the Android twin of the web's config drift
+   guard. Both frontends' demo modes now exercise every badge state.
 9. [x] **WP APP-DEMO** — Android demo mode, done 2026-08-22 (commit
    bdb2c19): screenshot-grade fixtures behind the onboarding skip link,
    no account, no vault, no network; six repository seams, compile-time
