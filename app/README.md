@@ -3466,3 +3466,94 @@ behaviour, and every other visual claim in this WP remain unconfirmed by
 sight. Every claim in this file is a source-level, build-level, or
 test-level claim, stated as such, now including the Material3-version
 coupling immediately above.
+
+## Installed-state badge + sweep settings surface (WP AG-3)
+
+Android parity for two pieces WP AG-1 (api/) and WP 4d-web (web/) shipped
+first: the `installed_on` badge (`GET /v1/games`/`GET /v1/games/{appid}`,
+WP AG-1) and the `sweep_include_cached` settings toggle plus the
+`GET /v1/schedule` status/GC-risk block (WP 4d-web's Android twin).
+
+### The seam
+
+```
+app/app/src/main/java/dev/steamvault/app/
+├── net/model/
+│   ├── Games.kt                     # + InstalledOnEntry, installed_on on GameSummary/GameDetail
+│   └── Schedule.kt                  # NEW: ScheduleOut (GET /v1/schedule)
+├── repo/ScheduleRepository.kt       # NEW: the seventh repository seam
+├── ui/library/
+│   ├── logic/InstalledState.kt      # NEW: InstalledBadge sealed class + installedBadgeFor(game)
+│   ├── InstalledBadgeText.kt        # NEW: shared badge text, grid/list/detail
+│   ├── GameCard.kt                  # + installedBadgeText(model.installedBadge)
+│   └── GameListRow.kt               # + installedBadgeText(model.installedBadge)
+├── ui/detail/GameDetailSheet.kt     # gameSummaryFrom copies installed_on; the protection-gap warning
+├── ui/settings/
+│   ├── logic/SchedulePresentation.kt  # NEW: Kotlin port of web/js/lib/schedule-presentation.js
+│   ├── SettingsController.kt         # + scheduleRepository, `schedule` state (load()/save())
+│   └── SettingsScreen.kt             # + SweepIncludeCachedField, SweepStatusBlock
+└── demo/
+    ├── DemoModels.kt / DemoFixtures.kt   # + installedOn on DemoGame, three-state fixture set
+    ├── DemoState.kt                      # + scheduleOut(), CONFIG_DEFAULT_AUTO_GC/_SWEEP_INCLUDE_CACHED
+    └── DemoRepositories.kt               # + DemoScheduleRepository
+```
+
+### Round 1 → round 2, what the review caught
+
+Round 1 shipped the model-layer decisions correctly (`InstalledBadge`'s
+three states, `sweepTargetsMessage`/`cachedSweepGcRiskWarning`'s ported
+branches) but left four real gaps, all closed in round 2:
+
+- **No wiring pins.** Every screen/controller call site (`GameCard.kt`/
+  `GameListRow.kt`'s badge line, `GameDetailSheet.kt`'s installed section,
+  `SettingsScreen.kt`'s toggle and status block, `load()`/`save()`'s
+  schedule fetch, `gameSummaryFrom`'s `installed_on` copy) could be deleted
+  outright and the full suite — build, both unit-test variants, lint —
+  stayed green, because only the pure logic underneath was pinned, never
+  the fact that a screen actually calls it. Fixed by `Ag3WiringTest.kt`,
+  the same source-text-scan technique `DemoModeUiWiringTest`/
+  `DemoModeImportAllowlistTest` already use for exactly this class of gap
+  (no Compose test rule/emulator in this environment to catch it
+  behaviourally).
+- **The copy rule ("`[]` means no fresh signal, never 'not installed
+  anywhere'") was prose-only.** `InstalledBadgeCopyTest.kt` now pins the
+  `NoSignal -> null` mapping structurally and scans every badge-path source
+  file and `strings.xml` entry for the forbidden phrase.
+- **The restated `sweep_cached_gc_risk` formula in `DemoState.scheduleOut()`
+  had zero tests.** `DemoScheduleContractTest.kt` mirrors
+  `web/tests/demo-data-schedule.test.js`'s full six-combination truth table
+  plus its named dry-run mutation pin (a formula that checks
+  `auto_gc == "off"` instead of `auto_gc != "execute"` treats dry-run as
+  safe, which is wrong — dry-run reports without reclaiming).
+- **The demo's `auto_gc`/`sweep_include_cached` defaults were stale
+  (pre-ADR-0014 `"off"`), and the kdoc asserted the resulting risk warning
+  as the shipped default's own behaviour** — false: `api/vault_api/
+  config.py`'s real `DEFAULT_AUTO_GC`/`DEFAULT_SWEEP_INCLUDE_CACHED` are
+  `"execute"`/`true` (ADR-0014), so a fresh REAL vault shows no warning.
+  Fixed by mirroring those real defaults in `DemoState.kt`'s
+  `CONFIG_DEFAULT_AUTO_GC`/`CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED` constants
+  (the risk warning is still reachable in a demo session — flip "Include
+  cached games" on and Auto-GC to Off/Dry run in Settings), plus
+  `DemoConfigDefaultsDriftTest.kt`, the Kotlin twin of `web/tests/
+  demo-data-config-defaults.test.js`, reading `config.py`'s real text and
+  failing loudly — with a VALUE-drift vs. GRAMMAR-drift labelled message —
+  the next time the two fixtures disagree.
+
+### What only a device can settle
+
+No emulator exists in this environment (this file's standing constraint).
+Unconfirmed by sight, all real for this WP specifically:
+
+- Whether the installed badge actually fits legibly inside a 2/3-column
+  grid tile without truncation or overlapping the size/status line above it.
+- Badge text contrast against real Steam cover art (the badge has no
+  background chip of its own, unlike the capsule pill) — a bright cover
+  could wash out the `onSurfaceVariant`/`error` text color choice.
+- TalkBack behavior on the `sweep_include_cached` `SingleChoiceSegmentedButtonRow`
+  — it currently carries no explicit `Modifier.semantics { }` group
+  wiring (no `role="group"`/`aria-labelledby` equivalent the way the web
+  port's `<div role="group" aria-labelledby=...>` does), so TalkBack's
+  actual announcement for this control is unverified.
+- Whether the detail sheet's job-control/delete/GC action row still lands
+  above the fold once the new installed-state lines push it down on a
+  typical phone screen height.

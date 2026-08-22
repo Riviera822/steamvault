@@ -183,6 +183,7 @@ class DemoModeImportAllowlistTest {
             "DemoClientsRepository",
             "DemoMappingRepository",
             "DemoSettingsRepository",
+            "DemoScheduleRepository", // N3, WP AG-3 round 2 fix
             "DemoModeBanner",
         )) {
             assertTrue("expected $className to still exist under demo/ or ui/demo/", text.contains(className))

@@ -1,6 +1,7 @@
 package dev.steamvault.app.demo
 
 import dev.steamvault.app.net.model.ClientOut
+import dev.steamvault.app.net.model.InstalledOnEntry
 import java.time.Instant
 
 /**
@@ -45,6 +46,8 @@ internal fun seedGames(): MutableList<DemoGame> = mutableListOf(
         lastManifestCheck = isoAgo(3_600L),
         gcReclaimableBytes = 90_000_000L,
         gcHeldBackBytes = 0L,
+        // WP AG-3 state 1: installed AND cached -- the ordinary badge.
+        installedOn = listOf(InstalledOnEntry(client_id = "demo-livingroom-pc", reported_at = isoAgo(600L))),
     ),
     DemoGame(
         appid = 4_010_020,
@@ -57,6 +60,10 @@ internal fun seedGames(): MutableList<DemoGame> = mutableListOf(
         lastManifestCheck = isoAgo(2 * 86_400L),
         gcReclaimableBytes = 0L,
         gcHeldBackBytes = 0L,
+        // WP AG-3 state 2: installed but NOT cached -- the protection-gap
+        // case the whole installed_on field exists for (api/README.md
+        // "Installed state per app").
+        installedOn = listOf(InstalledOnEntry(client_id = "demo-steamdeck", reported_at = isoAgo(1_800L))),
     ),
     DemoGame(
         appid = 4_010_030,
@@ -68,6 +75,9 @@ internal fun seedGames(): MutableList<DemoGame> = mutableListOf(
         lastManifestCheck = null,
         gcReclaimableBytes = 0L,
         gcHeldBackBytes = 0L,
+        // WP AG-3 state 3: no fresh signal -- installedOn stays [] (the
+        // default). Never worded as "not installed anywhere" -- see
+        // ui/library/logic/InstalledState.kt's copy rule.
     ),
     DemoGame(
         appid = 4_010_040,
@@ -82,6 +92,12 @@ internal fun seedGames(): MutableList<DemoGame> = mutableListOf(
         lastManifestCheck = null,
         gcReclaimableBytes = 0L,
         gcHeldBackBytes = 0L,
+        // WP AG-3: installed+cached with TWO fresh reporters, exercising
+        // InstalledOnDisplay.additionalClientCount > 0 ("+1 more").
+        installedOn = listOf(
+            InstalledOnEntry(client_id = "demo-livingroom-pc", reported_at = isoAgo(4 * 3_600L)),
+            InstalledOnEntry(client_id = "demo-steamdeck", reported_at = isoAgo(7_200L)),
+        ),
     ),
     DemoGame(
         appid = 4_010_050,

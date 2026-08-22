@@ -35,6 +35,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.steamvault.app.R
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingInfoOut
 import dev.steamvault.app.repo.SteamIdentityState
 import dev.steamvault.app.storage.ProfileKind
@@ -43,10 +44,12 @@ import dev.steamvault.app.ui.settings.logic.SettingDraft
 import dev.steamvault.app.ui.settings.logic.SettingsApplies
 import dev.steamvault.app.ui.settings.logic.SettingsSource
 import dev.steamvault.app.ui.settings.logic.SteamLibraryStatus
+import dev.steamvault.app.ui.settings.logic.cachedSweepGcRiskWarning
 import dev.steamvault.app.ui.settings.logic.canResetSetting
 import dev.steamvault.app.ui.settings.logic.effectiveAsFieldText
 import dev.steamvault.app.ui.settings.logic.parseSettingsApplies
 import dev.steamvault.app.ui.settings.logic.parseSettingsSource
+import dev.steamvault.app.ui.settings.logic.sweepTargetsMessage
 import kotlinx.coroutines.launch
 
 /**
@@ -232,6 +235,16 @@ private fun SettingsForm(controller: SettingsController, scope: kotlinx.coroutin
             controller.setDraft("auto_gc", SettingDraft.Text(v))
         }
     }
+    entries["sweep_include_cached"]?.let { entry ->
+        SweepIncludeCachedField(
+            entry = entry,
+            draft = controller.drafts["sweep_include_cached"],
+            readonly = response.readonly,
+            onSelect = { v -> controller.setDraft("sweep_include_cached", SettingDraft.Text(v)) },
+            onReset = { controller.resetDraft("sweep_include_cached") },
+        )
+    }
+    SweepStatusBlock(controller.schedule)
 
     Text(stringResource(R.string.settings_section_webhook), style = MaterialTheme.typography.titleMedium)
     entries["webhook_url"]?.let {
@@ -348,6 +361,73 @@ private fun AutoGcField(
             }
         }
         Text(captionFor(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * The `sweep_include_cached` toggle (WP AG-3) — structurally the same
+ * segmented-button idiom [AutoGcField] above already establishes for a
+ * small enumerated `GET`/`PATCH /v1/settings` choice, just two options
+ * instead of three, and wire values `"true"`/`"false"` (api/README.md:
+ * a JSON boolean literal 422s this key) rather than an enum's own words.
+ * [SettingDraft.Text]/[buildSettingsPatchDraft]/`valueChanged` in
+ * `SettingsDiff.kt` already treat every non-`webhook_events` key as plain
+ * text, so this needs no changes there — verified by reading that file.
+ */
+@Composable
+private fun SweepIncludeCachedField(
+    entry: SettingInfoOut,
+    draft: SettingDraft?,
+    readonly: Boolean,
+    onSelect: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    val options = listOf(
+        "false" to stringResource(R.string.settings_sweep_include_cached_off),
+        "true" to stringResource(R.string.settings_sweep_include_cached_on),
+    )
+    val current = (draft as? SettingDraft.Text)?.value ?: effectiveAsFieldText(entry)
+    Column {
+        Text(stringResource(R.string.settings_sweep_include_cached_label))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, (value, label) ->
+                SegmentedButton(
+                    selected = value == current,
+                    onClick = { onSelect(value) },
+                    enabled = !readonly,
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                ) { Text(label) }
+            }
+        }
+        Text(captionFor(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            stringResource(R.string.settings_sweep_include_cached_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!readonly && canResetSetting(entry)) {
+            TextButton(onClick = onReset) { Text(stringResource(R.string.settings_reset)) }
+        }
+    }
+}
+
+/**
+ * The "did the last scheduled sweep actually do anything" line, plus the
+ * "keeping the cache current without collecting" warning when the server
+ * reports the risk condition (WP AG-3) — both pieces of text come from
+ * `ui/settings/logic/SchedulePresentation.kt`, fed [schedule] verbatim:
+ * neither is computed here from `sweep_include_cached`/`auto_gc` a second
+ * time (see that module's kdoc). Renders nothing at all — not a
+ * placeholder — while [schedule] is still `null` (no fetch yet, or the
+ * fetch failed); this is a status readout, not a required part of the form.
+ */
+@Composable
+private fun SweepStatusBlock(schedule: ScheduleOut?) {
+    sweepTargetsMessage(schedule)?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    cachedSweepGcRiskWarning(schedule)?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
 }
 

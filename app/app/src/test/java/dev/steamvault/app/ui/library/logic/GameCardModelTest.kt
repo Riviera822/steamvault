@@ -1,6 +1,7 @@
 package dev.steamvault.app.ui.library.logic
 
 import dev.steamvault.app.net.model.GameSummary
+import dev.steamvault.app.net.model.InstalledOnEntry
 import dev.steamvault.app.net.model.JobSummary
 import dev.steamvault.app.ui.status.StatusKind
 import org.junit.Assert.assertEquals
@@ -110,5 +111,47 @@ class GameCardModelTest {
         val known = runningGame().copy(status = "done", last_prefill_at = "2026-08-01T00:00:00Z")
         val model = buildGameCardModel(known, null, selected = false, selecting = false)
         assertEquals(true, model.isKnownToVault)
+    }
+
+    // ---- WP AG-3: installedBadge is part of the model, and of its equality ----
+
+    @Test
+    fun `installedBadge is NoSignal for a game with no installed_on entries`() {
+        val model = buildGameCardModel(runningGame(), null, selected = false, selecting = false)
+        assertEquals(InstalledBadge.NoSignal, model.installedBadge)
+    }
+
+    @Test
+    fun `installedBadge carries through to the render model, cached vs not-cached branch included`() {
+        val entries = listOf(InstalledOnEntry("gaming-pc", "2026-08-22T09:15:03Z"))
+        val notCached = runningGame().copy(installed_on = entries, size_bytes = null)
+        val cached = runningGame().copy(installed_on = entries, size_bytes = 5_000_000L)
+
+        val notCachedModel = buildGameCardModel(notCached, null, selected = false, selecting = false)
+        val cachedModel = buildGameCardModel(cached, null, selected = false, selecting = false)
+
+        assertTrue(notCachedModel.installedBadge is InstalledBadge.InstalledNotCached)
+        assertTrue(cachedModel.installedBadge is InstalledBadge.InstalledAndCached)
+    }
+
+    @Test
+    fun `two ticks with the SAME installed_on still produce an EQUAL model (skip-safety extends to the new field)`() {
+        val entries = listOf(InstalledOnEntry("gaming-pc", "2026-08-22T09:15:03Z"))
+        val tick1 = buildGameCardModel(runningGame().copy(installed_on = entries), null, selected = false, selecting = false)
+        val tick2 = buildGameCardModel(runningGame().copy(installed_on = entries), null, selected = false, selecting = false)
+        assertNotSame(tick1, tick2)
+        assertEquals(tick1, tick2)
+    }
+
+    @Test
+    fun `a change in installed_on alone (no other field changed) is a DIFFERENT model`() {
+        val before = buildGameCardModel(runningGame(), null, selected = false, selecting = false)
+        val after = buildGameCardModel(
+            runningGame().copy(installed_on = listOf(InstalledOnEntry("gaming-pc", "2026-08-22T09:15:03Z"))),
+            null,
+            selected = false,
+            selecting = false,
+        )
+        assertTrue(before != after)
     }
 }

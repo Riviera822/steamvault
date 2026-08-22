@@ -17,6 +17,7 @@ import dev.steamvault.app.net.model.OwnedGamesRelayOut
 import dev.steamvault.app.net.model.PlayerSummariesRelayOut
 import dev.steamvault.app.net.model.PrefillJobRef
 import dev.steamvault.app.net.model.PrefillRequest
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingsOut
 import dev.steamvault.app.net.model.buildSettingsPatch
 import dev.steamvault.app.net.profile.CleartextPolicyInterceptor
@@ -217,6 +218,14 @@ class VaultApiClient(
     /** @param updates key -> new value ([dev.steamvault.app.net.model.settingPatchValue]), or `null` to clear the override. */
     suspend fun patchSettings(updates: Map<String, JsonElement?>): SettingsOut =
         patch("/v1/settings", buildSettingsPatch(updates))
+
+    // ---- schedule (WP AG-3) -----------------------------------------------
+
+    /** `GET /v1/schedule` — scheduler config + last-sweep bookkeeping,
+     * incl. the `sweep_include_cached`/`sweep_cached_gc_risk` fields WP 4d
+     * added. Read-only endpoint; the writable half of this config lives at
+     * [settings]/[patchSettings] (`sweep_include_cached` is one of its keys). */
+    suspend fun schedule(): ScheduleOut = get("/v1/schedule")
 
     // ---- steam relay (WP 4h.4; ADR-0004 second addendum) -----------------
     // The device-local Steam Web API key and its direct-to-Valve calls are

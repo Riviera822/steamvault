@@ -10,12 +10,14 @@ import dev.steamvault.app.net.model.JobDetail
 import dev.steamvault.app.net.model.JobSummary
 import dev.steamvault.app.net.model.MappingEntry
 import dev.steamvault.app.net.model.PrefillJobRef
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingsOut
 import dev.steamvault.app.repo.CacheRepository
 import dev.steamvault.app.repo.ClientsRepository
 import dev.steamvault.app.repo.GamesRepository
 import dev.steamvault.app.repo.JobsRepository
 import dev.steamvault.app.repo.MappingRepository
+import dev.steamvault.app.repo.ScheduleRepository
 import dev.steamvault.app.repo.SettingsRepository
 import kotlinx.serialization.json.JsonElement
 
@@ -70,4 +72,11 @@ class DemoMappingRepository(private val state: DemoState) : MappingRepository {
 class DemoSettingsRepository(private val state: DemoState) : SettingsRepository {
     override suspend fun get(): SettingsOut = state.settingsOut()
     override suspend fun patch(updates: Map<String, JsonElement?>): SettingsOut = state.patchSettings(updates)
+}
+
+/** WP AG-3: the seventh demo repository. See [DemoState.scheduleOut]'s kdoc
+ * for why `sweep_include_cached`/`sweep_cached_gc_risk` react live to a
+ * settings PATCH while `last_sweep_*` stay a static fixture. */
+class DemoScheduleRepository(private val state: DemoState) : ScheduleRepository {
+    override suspend fun get(): ScheduleOut = state.scheduleOut()
 }

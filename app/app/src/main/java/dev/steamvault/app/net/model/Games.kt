@@ -27,6 +27,7 @@ data class GameSummary(
     val depot_count: Int,
     val size_bytes: Long? = null,
     val needs_force: Boolean = false,
+    val installed_on: List<InstalledOnEntry> = emptyList(),
 )
 
 /** One entry of [GameDetail.depots] — `vault_api/routers/games.py::DepotEntry`. */
@@ -35,6 +36,22 @@ data class DepotEntry(
     val depotid: Int,
     val shared: Boolean,
     val size_bytes: Long? = null,
+)
+
+/**
+ * One entry of [GameSummary.installed_on] / [GameDetail.installed_on] —
+ * `vault_api/routers/games.py` (WP AG-1). ALREADY filtered server-side to
+ * fresh agent reports only (the same staleness gate the scheduler itself
+ * uses before trusting a report for sweep targeting, `api/README.md`
+ * "Installed state per app"): an empty `installed_on` list means "no fresh
+ * signal" — it covers BOTH "never installed anywhere" AND "installed, but
+ * the reporting agent has gone quiet" indistinguishably. Never render `[]`
+ * as "not installed anywhere".
+ */
+@Serializable
+data class InstalledOnEntry(
+    val client_id: String,
+    val reported_at: String,
 )
 
 /** `GET /v1/games/{appid}` — `vault_api/routers/games.py::GameDetail`. */
@@ -48,4 +65,5 @@ data class GameDetail(
     val depots: List<DepotEntry> = emptyList(),
     val size_bytes: Long? = null,
     val needs_force: Boolean = false,
+    val installed_on: List<InstalledOnEntry> = emptyList(),
 )

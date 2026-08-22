@@ -4,7 +4,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.steamvault.app.net.error.VaultApiError
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingsOut
+import dev.steamvault.app.repo.ScheduleRepository
 import dev.steamvault.app.repo.SettingsRepository
 import dev.steamvault.app.repo.SteamIdentityRepository
 import dev.steamvault.app.repo.SteamLoginResult
@@ -59,9 +61,20 @@ data class ConnectionSummary(val profileKind: String?, val baseUrl: String?) {
  * screen controller already has, so demo mode can hand this class an
  * in-memory [dev.steamvault.app.demo.DemoSettingsRepository] instead of
  * ever needing this class to know demo mode exists.
+ *
+ * [scheduleRepository] (WP AG-3, the seventh such seam) backs the
+ * `GET /v1/schedule` read [schedule] exposes -- fetched best-effort inside
+ * [load] alongside [settingsResponse]: a `/v1/schedule` failure must not
+ * block the rest of the settings form from rendering, same posture the web
+ * port's `load()` takes (`api.schedule().catch(() => null)`,
+ * `web/js/views/settings.js`). [schedule] feeds
+ * `ui/settings/logic/SchedulePresentation.kt`'s two pure functions, never
+ * anything computed a second time from [settingsResponse]'s own
+ * `sweep_include_cached`/`auto_gc` values.
  */
 class SettingsController(
     private val settingsRepository: SettingsRepository,
+    private val scheduleRepository: ScheduleRepository,
     private val credentialStore: CredentialStore,
     private val identityRepository: SteamIdentityRepository,
     private val strings: SettingsStrings,
@@ -71,6 +84,10 @@ class SettingsController(
     var loadError by mutableStateOf<String?>(null)
         private set
     var settingsResponse by mutableStateOf<SettingsOut?>(null)
+        private set
+    /** Last `GET /v1/schedule` response, or `null` before the first
+     * successful fetch / after a failed one -- see this class's kdoc. */
+    var schedule by mutableStateOf<ScheduleOut?>(null)
         private set
     var drafts by mutableStateOf<Map<String, SettingDraft>>(emptyMap())
         private set
@@ -106,6 +123,16 @@ class SettingsController(
         } finally {
             loading = false
         }
+        // Best-effort, deliberately independent of the try/catch above: a
+        // failed/unreachable /v1/schedule must not block the settings form
+        // itself from loading -- sweepTargetsMessage/cachedSweepGcRiskWarning
+        // both already treat a null schedule as "print nothing" (see
+        // SchedulePresentation.kt).
+        schedule = try {
+            scheduleRepository.get()
+        } catch (e: VaultApiError) {
+            null
+        }
     }
 
     fun setDraft(key: String, draft: SettingDraft) {
@@ -133,6 +160,18 @@ class SettingsController(
             settingsResponse = settingsRepository.patch(patch)
             drafts = emptyMap()
             toast = strings.savedToast()
+            // A saved PATCH can change sweep_include_cached/auto_gc, which
+            // changes sweep_cached_gc_risk server-side -- re-fetch so the
+            // warning reflects the just-saved values immediately rather than
+            // whatever GET /v1/schedule answered at load(). Best-effort,
+            // same reasoning as load(): a failed refetch must not undo the
+            // successful save (web/js/views/settings.js's own WP 4d-web
+            // comment, ported verbatim in spirit).
+            schedule = try {
+                scheduleRepository.get()
+            } catch (e: VaultApiError) {
+                schedule
+            }
         } catch (e: VaultApiError) {
             // 422 field errors (api/README.md: "one bad value... fails the
             // request... with a DISTINCT detail") are surfaced verbatim --

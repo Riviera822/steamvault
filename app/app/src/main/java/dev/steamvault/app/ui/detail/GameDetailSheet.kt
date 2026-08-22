@@ -55,6 +55,8 @@ import dev.steamvault.app.ui.detail.logic.buildDepotPresentation
 import dev.steamvault.app.ui.detail.logic.detailJobActions
 import dev.steamvault.app.ui.detail.logic.findTrackedJob
 import dev.steamvault.app.ui.library.CoverArtImage
+import dev.steamvault.app.ui.library.installedBadgeText
+import dev.steamvault.app.ui.library.logic.InstalledBadge
 import dev.steamvault.app.ui.library.logic.MultiPlan
 import dev.steamvault.app.ui.library.logic.StatusActionType
 import dev.steamvault.app.ui.library.logic.buildMultiPlan
@@ -64,6 +66,7 @@ import dev.steamvault.app.ui.library.logic.fallbackHues
 import dev.steamvault.app.ui.library.logic.formatBytesGB
 import dev.steamvault.app.ui.library.logic.hasProtectedCacheContent
 import dev.steamvault.app.ui.library.logic.hasVisibleCacheContent
+import dev.steamvault.app.ui.library.logic.installedBadgeFor
 import dev.steamvault.app.ui.library.logic.statusAction
 import dev.steamvault.app.ui.status.StatusIcon
 import dev.steamvault.app.ui.status.StatusIconSize
@@ -193,6 +196,7 @@ private fun gameSummaryFrom(detail: GameDetail): GameSummary = GameSummary(
     depot_count = detail.depots.size,
     size_bytes = detail.size_bytes,
     needs_force = detail.needs_force,
+    installed_on = detail.installed_on,
 )
 
 @Composable
@@ -344,6 +348,28 @@ private fun LoadedDetailBody(
     if (detail.needs_force) {
         Text(
             text = stringResource(R.string.detail_needs_force_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+
+    // ---- installed-state (WP AG-3) -------------------------------------------
+    val installedBadge = installedBadgeFor(gameSummary)
+    installedBadgeText(installedBadge, includeTimestamp = true)?.let { text ->
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+    if (installedBadge is InstalledBadge.InstalledNotCached) {
+        // The explicit statement the whole `installed_on` field exists for:
+        // a game a gaming PC currently has installed, which this vault is
+        // NOT protecting (api/README.md "Installed state per app").
+        Text(
+            text = stringResource(R.string.detail_installed_not_cached_warning, installedBadge.display.primaryClientId),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.padding(top = 2.dp),

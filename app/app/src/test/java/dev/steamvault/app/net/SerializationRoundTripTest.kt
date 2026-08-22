@@ -11,16 +11,20 @@ import dev.steamvault.app.net.model.JobControlOut
 import dev.steamvault.app.net.model.JobDetail
 import dev.steamvault.app.net.model.JobSummary
 import dev.steamvault.app.net.model.PrefillJobRef
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingsOut
 import dev.steamvault.app.net.model.settingAsBooleanOrNull
 import dev.steamvault.app.net.model.settingAsIntOrNull
 import dev.steamvault.app.net.model.settingAsStringListOrNull
 import dev.steamvault.app.net.model.settingAsStringOrNull
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -388,5 +392,171 @@ class SerializationRoundTripTest {
         val decoded = VaultJson.decodeFromString<GameSummary>(json)
 
         assertEquals(440, decoded.appid)
+    }
+
+    // -----------------------------------------------------------------
+    // WP AG-3: installed_on (GameSummary/GameDetail) and GET /v1/schedule.
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `GameSummary -- installed_on carries fresh agent-report entries, api README Installed state per app`() {
+        val json = """
+            {"appid":440,"name":"Team Fortress 2","status":"idle","last_prefill_at":null,
+             "last_manifest_check":null,"depot_count":0,"size_bytes":null,"needs_force":false,
+             "installed_on":[{"client_id":"gaming-pc","reported_at":"2026-08-22T09:15:03Z"}]}
+        """.trimIndent()
+
+        val decoded = decodeStrictAndLenient<GameSummary>(json)
+
+        assertEquals(1, decoded.installed_on.size)
+        assertEquals("gaming-pc", decoded.installed_on[0].client_id)
+        assertEquals("2026-08-22T09:15:03Z", decoded.installed_on[0].reported_at)
+    }
+
+    @Test
+    fun `GameSummary -- a pre-AG-1 server response with no installed_on key decodes to an empty list, not a crash`() {
+        // Forward-compat direction is the wrong way round here: THIS is the
+        // backward-compat direction -- an OLDER vault-api that has never
+        // heard of installed_on. Only VaultJson (production leniency), not
+        // decodeStrictAndLenient -- strictJson has no default to fall back
+        // on for a class-defined default the same way VaultJson does not
+        // need one either, but this fixture is deliberately missing the key
+        // to prove the Kotlin default (`= emptyList()`) is what saves it.
+        val json = """
+            {"appid":440,"name":"Team Fortress 2","status":"idle","last_prefill_at":null,
+             "last_manifest_check":null,"depot_count":0,"size_bytes":null,"needs_force":false}
+        """.trimIndent()
+
+        val decoded = VaultJson.decodeFromString<GameSummary>(json)
+
+        assertEquals(emptyList<Any>(), decoded.installed_on)
+    }
+
+    @Test
+    fun `GameDetail -- installed_on round trips alongside depots`() {
+        val json = """
+            {"appid":730,"name":"Counter-Strike 2","status":"done",
+             "last_prefill_at":"2026-08-05T20:44:34Z","last_manifest_check":null,
+             "depots":[],"size_bytes":null,"needs_force":false,
+             "installed_on":[{"client_id":"steam-deck","reported_at":"2026-08-22T08:00:00Z"},
+                              {"client_id":"gaming-pc","reported_at":"2026-08-22T09:15:03Z"}]}
+        """.trimIndent()
+
+        val decoded = decodeStrictAndLenient<GameDetail>(json)
+
+        assertEquals(2, decoded.installed_on.size)
+        assertEquals("steam-deck", decoded.installed_on[0].client_id)
+        assertEquals("gaming-pc", decoded.installed_on[1].client_id)
+    }
+
+    @Test
+    fun `ScheduleOut -- GET v1 schedule, schedule py ScheduleOut, a real sweep result with the risk flag on`() {
+        val json = """
+            {"enabled":true,"window":"22:00-06:00","overnight":true,"interval_minutes":180,
+             "client_stale_days":7,"server_timezone":"UTC+02:00",
+             "last_sweep_at":"2026-08-22T22:00:05Z","last_sweep_targets":3,"last_sweep_enqueued":1,
+             "next_eligible_at":"2026-08-23T22:00:00Z","sweep_include_cached":true,
+             "sweep_cached_gc_risk":true}
+        """.trimIndent()
+
+        val decoded = decodeStrictAndLenient<ScheduleOut>(json)
+
+        assertTrue(decoded.enabled)
+        assertEquals("22:00-06:00", decoded.window)
+        assertTrue(decoded.overnight)
+        assertEquals(180, decoded.interval_minutes)
+        assertEquals(7, decoded.client_stale_days)
+        assertEquals(3, decoded.last_sweep_targets)
+        assertEquals(1, decoded.last_sweep_enqueued)
+        assertTrue(decoded.sweep_include_cached)
+        assertTrue(decoded.sweep_cached_gc_risk)
+    }
+
+    @Test
+    fun `ScheduleOut -- a vault that has never swept decodes with the null triple, not zeros`() {
+        val json = """
+            {"enabled":false,"window":null,"overnight":false,"interval_minutes":180,
+             "client_stale_days":7,"server_timezone":"UTC+00:00",
+             "last_sweep_at":null,"last_sweep_targets":null,"last_sweep_enqueued":null,
+             "next_eligible_at":null,"sweep_include_cached":true,"sweep_cached_gc_risk":false}
+        """.trimIndent()
+
+        val decoded = decodeStrictAndLenient<ScheduleOut>(json)
+
+        assertFalse(decoded.enabled)
+        assertNull(decoded.window)
+        assertNull(decoded.last_sweep_at)
+        assertNull(decoded.last_sweep_targets)
+        assertNull(decoded.last_sweep_enqueued)
+        assertFalse(decoded.sweep_cached_gc_risk)
+    }
+
+    /**
+     * The Kotlin-type-system equivalent of `web/tests/schedule-presentation
+     * .test.js`'s "MUTATION PIN: only a literal boolean true triggers the
+     * warning" — see `SchedulePresentation.kt`'s kdoc. [ScheduleOut.sweep_cached_gc_risk]
+     * is declared `Boolean`, and [VaultJson] sets `isLenient = false`
+     * (production instance, not [strictJson] — this is exactly the
+     * behavior a real network response goes through), so a wire value that
+     * is a JSON number or JSON string for this field must fail decoding
+     * outright rather than silently coercing to `true`.
+     */
+    @Test
+    fun `MUTATION PIN -- sweep_cached_gc_risk as a JSON number fails to decode, never coerces to true`() {
+        val json = """
+            {"enabled":true,"window":null,"overnight":false,"interval_minutes":180,
+             "client_stale_days":7,"server_timezone":"UTC+00:00",
+             "last_sweep_at":null,"last_sweep_targets":null,"last_sweep_enqueued":null,
+             "next_eligible_at":null,"sweep_include_cached":true,"sweep_cached_gc_risk":1}
+        """.trimIndent()
+        try {
+            VaultJson.decodeFromString<ScheduleOut>(json)
+            fail("expected a SerializationException decoding a JSON number into a Boolean field")
+        } catch (_: SerializationException) {
+            // expected
+        }
+    }
+
+    /**
+     * MEASURED, not assumed: a quoted JSON string `"true"`/`"false"` for a
+     * `Boolean` field DOES decode successfully through [VaultJson] (this
+     * was tried as a "fails to decode" pin first — it failed, i.e. the
+     * decode SUCCEEDED, which is the discovery being pinned here instead).
+     * kotlinx.serialization's boolean decoding reads the [JsonPrimitive]'s
+     * string CONTENT ("true"/"false") regardless of whether that content
+     * arrived quoted or bare, and `isLenient = false` does not change that
+     * — it governs unquoted/bare-token acceptance and comments/trailing
+     * commas, not this coercion. So [VaultJson]/the Kotlin `Boolean` type
+     * closes the NUMERIC half of the wire-level mutation hole (see the test
+     * above: a JSON number fails outright) but NOT a string that happens to
+     * spell "true"/"false" — that residual is recorded here rather than
+     * silently assumed closed, correcting `SchedulePresentation.kt`'s kdoc.
+     */
+    @Test
+    fun `MEASURED -- sweep_cached_gc_risk as the JSON STRING true still decodes successfully to true, a residual not a pin`() {
+        val json = """
+            {"enabled":true,"window":null,"overnight":false,"interval_minutes":180,
+             "client_stale_days":7,"server_timezone":"UTC+00:00",
+             "last_sweep_at":null,"last_sweep_targets":null,"last_sweep_enqueued":null,
+             "next_eligible_at":null,"sweep_include_cached":true,"sweep_cached_gc_risk":"true"}
+        """.trimIndent()
+        val decoded = VaultJson.decodeFromString<ScheduleOut>(json)
+        assertTrue(decoded.sweep_cached_gc_risk)
+    }
+
+    @Test
+    fun `MEASURED -- but a string that is not literally true or false still fails to decode`() {
+        val json = """
+            {"enabled":true,"window":null,"overnight":false,"interval_minutes":180,
+             "client_stale_days":7,"server_timezone":"UTC+00:00",
+             "last_sweep_at":null,"last_sweep_targets":null,"last_sweep_enqueued":null,
+             "next_eligible_at":null,"sweep_include_cached":true,"sweep_cached_gc_risk":"yes"}
+        """.trimIndent()
+        try {
+            VaultJson.decodeFromString<ScheduleOut>(json)
+            fail("expected a SerializationException decoding a non-boolean-spelled string into a Boolean field")
+        } catch (_: SerializationException) {
+            // expected
+        }
     }
 }

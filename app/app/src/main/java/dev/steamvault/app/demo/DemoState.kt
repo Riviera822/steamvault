@@ -12,9 +12,13 @@ import dev.steamvault.app.net.model.JobDetail
 import dev.steamvault.app.net.model.JobSummary
 import dev.steamvault.app.net.model.MappingEntry
 import dev.steamvault.app.net.model.PrefillJobRef
+import dev.steamvault.app.net.model.ScheduleOut
 import dev.steamvault.app.net.model.SettingInfoOut
 import dev.steamvault.app.net.model.SettingsOut
 import dev.steamvault.app.net.model.SkippedSharedDepotOut
+import dev.steamvault.app.net.model.settingAsBooleanOrNull
+import dev.steamvault.app.net.model.settingAsIntOrNull
+import dev.steamvault.app.net.model.settingAsStringOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -64,6 +68,12 @@ class DemoState private constructor(
     private val games: MutableList<DemoGame>,
     private val jobs: MutableList<DemoJob>,
     private val clients: List<ClientOut>,
+    /** WP AG-3: `GET /v1/schedule`'s `last_sweep_at` fixture, computed once
+     * at [fresh] time (not on every [scheduleOut] call) so it reads as a
+     * stable "42 minutes ago" for the lifetime of one demo session, the
+     * same freshness posture [seedGames]/[seedJobs]/[seedClients] already
+     * take for their own timestamps. */
+    private val lastSweepAt: String,
 ) {
     private var nextJobId = (jobs.maxOfOrNull { it.id } ?: 900_099) + 1
     private val settingsOverrides = mutableMapOf<String, String>()
@@ -321,6 +331,70 @@ class DemoState private constructor(
         else -> ""
     }
 
+    // ---- schedule (WP AG-3) ---------------------------------------------------
+
+    /**
+     * `GET /v1/schedule` fixture — mirrors `web/js/demo-data.js`'s
+     * `handleGetSchedule()` decision, not merely its numbers: `last_sweep_*`/
+     * `next_eligible_at` are a static, plausible fixture (this demo model
+     * has no real scheduler tick to derive them from, same posture
+     * [seedJobs]'s hand-authored history already takes), but
+     * `sweep_include_cached`/`sweep_cached_gc_risk` are NOT static — both
+     * are derived from [describeSettings]'s live result, so toggling
+     * "Include cached games" or "Auto-GC" in the Settings screen and
+     * re-fetching `/v1/schedule` (which [dev.steamvault.app.ui.settings.SettingsController.save]
+     * does after every successful PATCH) reflects the change immediately.
+     * `sweep_cached_gc_risk` is computed with the EXACT SAME formula as
+     * `vault_api/scheduler.py::cached_sweep_gc_risk`
+     * (`sweep_include_cached && auto_gc != "execute"`) — this is the ONE
+     * place in this demo model allowed to restate that formula, mirroring
+     * the real server's one place. `DemoScheduleContractTest` pins this
+     * formula with the full six-combination truth table plus a named
+     * mutation pin (both ported from `web/tests/demo-data-schedule.test.js`),
+     * not merely trusted.
+     *
+     * **Round 2 correction (B4) — the defaults below MIRROR
+     * `api/vault_api/config.py`'s real shipped values
+     * ([CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED] = `true`,
+     * [CONFIG_DEFAULT_AUTO_GC] = `"execute"`, ADR-0014), which means a
+     * FRESH demo session reports `sweep_cached_gc_risk = false` and shows
+     * NO warning out of the box — exactly what a fresh real vault reports
+     * today. The previous version of this kdoc claimed "the shipped
+     * defaults already produce it," which was true only because this
+     * fixture's `auto_gc` default was still the pre-ADR-0014 `"off"` — a
+     * twin-fixture drift `DemoConfigDefaultsDriftTest` now guards against
+     * (`docs/LEARNINGS.md`: "twin config files need twin pins"). The
+     * risk-warning state is still screenshottable in the demo: flip
+     * "Include cached games" to Include and Auto-GC to Off or Dry run in
+     * the Settings screen, and re-fetching `/v1/schedule` reflects that
+     * immediately — it is simply no longer the FIRST thing a fresh session
+     * shows.** Everything downstream (`ui/settings/logic/
+     * SchedulePresentation.kt`) only ever reads this already-computed
+     * field, never recomputes it (docs/LEARNINGS.md: "two call sites
+     * computing the same domain predicate WILL diverge").
+     */
+    @Synchronized
+    fun scheduleOut(): ScheduleOut {
+        val effective = describeSettings().associate { it.key to it.effective }
+        val window = effective["schedule_window"]?.settingAsStringOrNull()
+        val sweepIncludeCached = effective["sweep_include_cached"]?.settingAsBooleanOrNull() ?: false
+        val autoGc = effective["auto_gc"]?.settingAsStringOrNull()
+        return ScheduleOut(
+            enabled = !window.isNullOrBlank(),
+            window = window,
+            overnight = false,
+            interval_minutes = effective["schedule_interval_minutes"]?.settingAsIntOrNull() ?: 180,
+            client_stale_days = effective["schedule_client_stale_days"]?.settingAsIntOrNull() ?: 7,
+            server_timezone = "UTC+00:00",
+            last_sweep_at = lastSweepAt,
+            last_sweep_targets = DEMO_LAST_SWEEP_TARGETS,
+            last_sweep_enqueued = DEMO_LAST_SWEEP_ENQUEUED,
+            next_eligible_at = null,
+            sweep_include_cached = sweepIncludeCached,
+            sweep_cached_gc_risk = sweepIncludeCached && autoGc != "execute",
+        )
+    }
+
     private fun describeSettings(): List<SettingInfoOut> {
         val overridable = SETTINGS_SPECS.values.filter { !it.envOnly }.map { spec ->
             val override = settingsOverrides[spec.key]
@@ -362,11 +436,25 @@ class DemoState private constructor(
         private const val PREFILL_TICKS = 2
         private const val GC_TICKS = 1
 
+        /** WP AG-3 `GET /v1/schedule` fixture — a plausible, static
+         * "last sweep" result (mirrors `web/js/demo-data.js`'s
+         * `DEMO_LAST_SWEEP`; a non-zero, non-null pair so the demo exercises
+         * `sweepTargetsMessage`'s "have real counts" branch, not the
+         * never-ran/started-no-result ones). */
+        private const val DEMO_LAST_SWEEP_TARGETS = 3
+        private const val DEMO_LAST_SWEEP_ENQUEUED = 1
+        private const val DEMO_LAST_SWEEP_AGO_SECONDS = 42L * 60L
+
         private fun nowIso(): String = Instant.now().toString()
 
         /** A brand-new, unmutated fixture set — call once per "enter demo
          * mode" action, never reused across sessions (WP brief constraint 4). */
-        fun fresh(): DemoState = DemoState(seedGames(), seedJobs(), seedClients())
+        fun fresh(): DemoState = DemoState(
+            seedGames(),
+            seedJobs(),
+            seedClients(),
+            Instant.now().minusSeconds(DEMO_LAST_SWEEP_AGO_SECONDS).toString(),
+        )
     }
 }
 
@@ -392,6 +480,22 @@ private val WEBHOOK_EVENTS_ALL = listOf(
     "client.bypass_resolved",
 )
 
+/**
+ * WP AG-3 round 2 fix (B4): the single source of truth this fixture's
+ * `auto_gc`/`sweep_include_cached` defaults are built from, mirroring
+ * `api/vault_api/config.py`'s real shipped `DEFAULT_AUTO_GC`/
+ * `DEFAULT_SWEEP_INCLUDE_CACHED` (ADR-0014) — same exported-constant
+ * pattern `web/js/demo-data.js`'s `CONFIG_DEFAULT_AUTO_GC`/
+ * `CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED` already establishes, kept
+ * `internal` (not `private`) specifically so `DemoConfigDefaultsDriftTest`
+ * can read config.py's real text and compare against these Kotlin values
+ * directly, instead of two independently-typed literals that could drift
+ * apart silently (`docs/LEARNINGS.md`: "twin config files need twin
+ * pins").
+ */
+internal const val CONFIG_DEFAULT_AUTO_GC = "execute"
+internal const val CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED = true
+
 private val SETTINGS_SPECS: Map<String, DemoSettingSpec> = listOf(
     DemoSettingSpec("vault_name", default = JsonPrimitive(""), env = JsonPrimitive("steamhangar-demo"), applies = "restart-required"),
     DemoSettingSpec("schedule_window", default = JsonNull, env = JsonPrimitive("22:00-06:00"), applies = "next_sweep"),
@@ -409,7 +513,29 @@ private val SETTINGS_SPECS: Map<String, DemoSettingSpec> = listOf(
         applies = "next_sweep",
         parse = { it.toIntOrNull()?.let { n -> JsonPrimitive(n) } ?: JsonPrimitive(7) },
     ),
-    DemoSettingSpec("auto_gc", default = JsonPrimitive("off"), env = JsonPrimitive("off"), applies = "immediately"),
+    // B4 fix: was JsonPrimitive("off") for both -- the pre-ADR-0014 value.
+    // config.py's real DEFAULT_AUTO_GC is "execute" (ADR-0014); this
+    // fixture must mirror it, not the value that predates the flip.
+    DemoSettingSpec(
+        "auto_gc",
+        default = JsonPrimitive(CONFIG_DEFAULT_AUTO_GC),
+        env = JsonPrimitive(CONFIG_DEFAULT_AUTO_GC),
+        applies = "immediately",
+    ),
+    // ADR-0014 (WP SWEEP-1): config.py's real DEFAULT_SWEEP_INCLUDE_CACHED
+    // is true. Combined with auto_gc's real "execute" default above,
+    // scheduleOut()'s sweep_cached_gc_risk is FALSE on a fresh session --
+    // matching a fresh real vault exactly (see DemoState.scheduleOut()'s
+    // own kdoc for how to reach the risk-warning state in the demo
+    // regardless). web/js/demo-data.js's own comment: default and env are
+    // deliberately identical for this key in the demo fixture.
+    DemoSettingSpec(
+        "sweep_include_cached",
+        default = JsonPrimitive(CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED),
+        env = JsonPrimitive(CONFIG_DEFAULT_SWEEP_INCLUDE_CACHED),
+        applies = "next_sweep",
+        parse = { raw -> JsonPrimitive(raw.trim().lowercase() in setOf("true", "yes", "on", "1")) },
+    ),
     DemoSettingSpec("webhook_url", default = JsonPrimitive(""), env = JsonPrimitive(""), applies = "restart-required"),
     DemoSettingSpec(
         "webhook_events",

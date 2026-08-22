@@ -32,6 +32,7 @@ import dev.steamvault.app.demo.DemoClientsRepository
 import dev.steamvault.app.demo.DemoGamesRepository
 import dev.steamvault.app.demo.DemoJobsRepository
 import dev.steamvault.app.demo.DemoMappingRepository
+import dev.steamvault.app.demo.DemoScheduleRepository
 import dev.steamvault.app.demo.DemoSettingsRepository
 import dev.steamvault.app.demo.DemoState
 import dev.steamvault.app.net.VaultApiClient
@@ -46,6 +47,7 @@ import dev.steamvault.app.repo.VaultClientsRepository
 import dev.steamvault.app.repo.VaultGamesRepository
 import dev.steamvault.app.repo.VaultJobsRepository
 import dev.steamvault.app.repo.VaultMappingRepository
+import dev.steamvault.app.repo.VaultScheduleRepository
 import dev.steamvault.app.repo.VaultSettingsRepository
 import dev.steamvault.app.storage.EncryptedCredentialStore
 import dev.steamvault.app.storage.SharedPreferencesLibraryPreferences
@@ -326,7 +328,13 @@ class MainActivity : ComponentActivity() {
         }
         vaultApiClientState = client
         settingsControllerState = client?.let {
-            SettingsController(VaultSettingsRepository(it), credentialStore, identityRepository, AndroidSettingsStrings(resources))
+            SettingsController(
+                VaultSettingsRepository(it),
+                VaultScheduleRepository(it),
+                credentialStore,
+                identityRepository,
+                AndroidSettingsStrings(resources),
+            )
         }
         clientsControllerState = client?.let {
             ClientsController(VaultClientsRepository(it), AndroidClientsStrings(resources))
@@ -360,6 +368,7 @@ class MainActivity : ComponentActivity() {
         demoState = demo
         settingsControllerState = SettingsController(
             DemoSettingsRepository(demo),
+            DemoScheduleRepository(demo),
             credentialStore,
             identityRepository,
             AndroidSettingsStrings(resources),

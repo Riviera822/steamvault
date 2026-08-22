@@ -111,6 +111,23 @@
         <item quantity="other">Freed %1$s · %2$d deletes failed</item>
     </plurals>
 
+    <!-- Installed-state badge (WP AG-3, api/README.md "Installed state per
+         app"): `installed_on` non-empty means a fresh agent report claims
+         this game installed. `library_installed_on` is used when the game
+         also has cache content right now; `library_installed_not_cached`
+         is the distinct wording for the protection-gap case (installed, but
+         nothing cached) — the two must never collapse into one string. An
+         EMPTY `installed_on` renders NOTHING (no string resource at all,
+         see ui/library/logic/InstalledState.kt) — it is never worded as
+         "not installed anywhere". -->
+    <string name="library_installed_on">Installed on %1$s</string>
+    <string name="library_installed_not_cached">Installed on %1$s — not cached</string>
+    <string name="library_installed_with_timestamp">%1$s (as of %2$s)</string>
+    <plurals name="library_installed_additional_clients">
+        <item quantity="one">(+%1$d more)</item>
+        <item quantity="other">(+%1$d more)</item>
+    </plurals>
+
     <!-- Shown only in the narrow window between a connection being cleared
          (Settings' Disconnect) and the onboarding gate re-showing —
          WP 4b.7 closed the "coming in WP 4b.7" gap this string used to name. -->
@@ -197,6 +214,16 @@
     <string name="settings_auto_gc_off">Off</string>
     <string name="settings_auto_gc_dry_run">Dry run</string>
     <string name="settings_auto_gc_execute">Execute</string>
+
+    <!-- The sweep_include_cached toggle (WP AG-3; web/js/views/settings.js's
+         buildSweepIncludeCachedField, ported for wording). Copies the web
+         port's exact label/hint sentences (docs/LEARNINGS.md 2026-08-22:
+         both of that package's round-1 review blockers were copy defects
+         in this exact wording — do not "improve" it). -->
+    <string name="settings_sweep_include_cached_label">Include cached games in the sweep</string>
+    <string name="settings_sweep_include_cached_off">Off</string>
+    <string name="settings_sweep_include_cached_on">On</string>
+    <string name="settings_sweep_include_cached_hint">When on, the next sweep also refreshes every game that already has content on disk, not only games a PC agent reports as installed.</string>
 
     <string name="settings_webhook_url_label">Webhook URL</string>
     <string name="settings_webhook_url_placeholder">https://… , blank to disable</string>
@@ -426,6 +453,15 @@
     <string name="detail_confirmed_current_before_cleared">Confirmed current at %1$s (before the cache was cleared)</string>
     <string name="detail_not_confirmed_current">Not yet confirmed current</string>
     <string name="detail_needs_force_note">Flagged to force a full re-download on its next download.</string>
+
+    <!-- WP AG-3, api/README.md "Installed state per app": the explicit
+         statement for the protection-gap case — a fresh agent report says
+         this game is installed somewhere, and the vault currently has
+         nothing cached for it. The compact badge line above this (shared
+         with the library card, ui/library/InstalledBadgeText.kt) already
+         names the client and timestamp; this sentence spells out the
+         consequence in full since the detail sheet has the room. -->
+    <string name="detail_installed_not_cached_warning">This game is installed on %1$s but is not currently cached — the vault is not protecting it.</string>
 
     <string name="detail_action_download">Download to cache</string>
     <string name="detail_action_retry">Retry download</string>

@@ -71,6 +71,11 @@ data class GameCardModel(
      * whether a depot list / delete action exists at all, not used by the
      * Library grid itself yet. */
     val isKnownToVault: Boolean,
+    /** WP AG-3: which of the three `installed_on` states applies to this
+     * row -- see `InstalledState.kt`'s `installedBadgeFor` for the decision
+     * and its copy-rule kdoc (an empty list is "no fresh signal", never
+     * "not installed anywhere"). */
+    val installedBadge: InstalledBadge,
 )
 
 /**
@@ -95,5 +100,6 @@ fun buildGameCardModel(
         action = statusAction(game, liveJob, selecting),
         selected = selected,
         isKnownToVault = isKnownToVault(game),
+        installedBadge = installedBadgeFor(game),
     )
 }
